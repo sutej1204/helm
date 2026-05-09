@@ -54,10 +54,11 @@ function FourAmountChain({ chain }: { chain: AuditResult["fourAmountChain"] }) {
 export default function SettlementAudit() {
   const [selectedClaimId, setSelectedClaimId] = useState<number>(1);
 
-  const { data: auditResult, isLoading } = useQuery<AuditResult>({
+  const { data: auditResult, isLoading } = useQuery<AuditResult | null>({
     queryKey: ["/api/recon/settlement-audit", selectedClaimId],
     queryFn: async () => {
       const res = await fetch(`/api/recon/settlement-audit/${selectedClaimId}`, { method: "POST" });
+      if (!res.ok) return null;
       return res.json();
     },
     enabled: !!selectedClaimId,
@@ -126,7 +127,7 @@ export default function SettlementAudit() {
       </div>
 
       {/* Audit Detail */}
-      {auditResult && !isLoading && (
+      {auditResult?.fourAmountChain && !isLoading && (
         <div className="space-y-4">
           <Card className="bg-card border-border">
             <CardHeader className="pb-2">

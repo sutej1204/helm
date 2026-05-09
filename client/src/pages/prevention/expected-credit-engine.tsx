@@ -444,28 +444,68 @@ const DRAFT_STEPS = [
   { label: "Attaching line-level data export", duration: 400 },
 ];
 
+interface AIDraft {
+  subject: string;
+  body: string;
+  reference: string;
+}
+
 function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: () => void; result: RichComputeResult }) {
   const [step, setStep] = useState<AIResolverStep>("drafting");
   const [draftProgress, setDraftProgress] = useState(0);
+  const [aiDraft, setAiDraft] = useState<AIDraft | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
-    if (!open) { setStep("drafting"); setDraftProgress(0); return; }
-    let elapsed = 0;
+    if (!open) {
+      setStep("drafting");
+      setDraftProgress(0);
+      setAiDraft(null);
+      setAiError(null);
+      return;
+    }
+
+    let cancelled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
+
+    // Visual progression — kept as UX sugar so the modal doesn't feel snappy/empty.
+    let elapsed = 0;
     DRAFT_STEPS.forEach((s, i) => {
-      const t = setTimeout(() => { setDraftProgress(i + 1); }, elapsed);
-      timers.push(t);
+      timers.push(setTimeout(() => { if (!cancelled) setDraftProgress(i + 1); }, elapsed));
       elapsed += s.duration;
     });
-    const done = setTimeout(() => setStep("preview"), elapsed + 200);
-    timers.push(done);
-    return () => timers.forEach(clearTimeout);
-  }, [open]);
+    timers.push(setTimeout(() => { if (!cancelled) setStep("preview"); }, elapsed + 200));
+
+    // Real Claude call in parallel — finishes whenever it finishes.
+    apiRequest("POST", "/api/ai/resolver/draft-email", {
+      programName: result.program?.programName ?? "",
+      programCode: result.program?.programCode ?? "",
+      periodLabel: "Q1 2024",
+      expectedAmount: result.expectedAmount,
+      eligibleAmount: result.totalEligibleAmount,
+      eligibleLines: result.totalEligibleLines,
+      totalInputLines: result.totalInputLines,
+      appliedRate: result.appliedRate,
+      appliedTier: result.appliedTier,
+      supplierName: "Trane Technologies",
+      computationVersion: result.computationVersion,
+    })
+      .then(r => r.json())
+      .then((data: AIDraft) => { if (!cancelled) setAiDraft(data); })
+      .catch((err: Error) => { if (!cancelled) setAiError(err.message); });
+
+    return () => { cancelled = true; timers.forEach(clearTimeout); };
+  }, [open, result]);
+
+  const reference = aiDraft?.reference ?? "HELM-AI-DRAFT";
 
   const handleSend = () => {
     setStep("sent");
-    toast({ title: "Email sent to Trane Technologies", description: "Credit claim dispute dispatched · Ref: HELM-AI-20240312-001" });
+    toast({
+      title: "Email sent to Trane Technologies",
+      description: `Credit claim dispute dispatched · Ref: ${reference}`,
+    });
   };
 
   const topSkus = [
@@ -539,7 +579,11 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
                   {[
                     { label: "To", value: "vendor.rebates@trane.com; ap-disputes@tranetechnologies.com" },
                     { label: "CC", value: "procurement@yourdomain.com; finance-ops@yourdomain.com" },
-                    { label: "Subject", value: "FlexPath SPA Credit Recovery — Q1 2024 · $234,710.00 Outstanding · Ref: HELM-AI-20240312-001" },
+                    {
+                      label: "Subject",
+                      value: aiDraft?.subject
+                        ?? `FlexPath SPA Credit Recovery — Q1 2024 · $${result.expectedAmount.toLocaleString()} Outstanding · Ref: ${reference}`,
+                    },
                   ].map(row => (
                     <div key={row.label} className="flex gap-3 text-xs">
                       <span className="text-muted-foreground w-14 shrink-0 pt-0.5">{row.label}</span>
@@ -558,17 +602,25 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
                   </div>
                 </div>
 
-                {/* Email body */}
-                <div className="bg-slate-950 px-5 py-4 text-xs text-slate-300 leading-relaxed space-y-3 max-h-72 overflow-y-auto">
-                  <p>Dear Trane Technologies Vendor Relations Team,</p>
-                  <p>
-                    I am writing on behalf of our procurement and finance teams regarding an outstanding credit balance of <strong className="text-emerald-400">$234,710.00</strong> owed under the <strong className="text-foreground">Trane FlexPath SPA (TRAN-SPA-FLEXPATH-Q1)</strong> programme for the period <strong className="text-foreground">Q1 2024 (01 January – 31 March 2024)</strong>.
-                  </p>
-                  <p>
-                    Our Helm credit engine has completed a full eligibility computation across <strong className="text-foreground">4,217 POS lines</strong>, of which <strong className="text-foreground">3,832 lines</strong> (90.9%) were confirmed eligible under the agreed SKU roster and programme terms. The applicable Tier 2 rate of <strong className="text-amber-400">5.0%</strong> has been applied to a qualifying net purchase value of <strong className="text-foreground">$4,694,200</strong>, yielding the credit figure above.
-                  </p>
+                {/* Email body — drafted by Claude via /api/ai/resolver/draft-email */}
+                <div className="bg-slate-950 px-5 py-4 text-xs text-slate-300 leading-relaxed space-y-3 max-h-80 overflow-y-auto">
+                  {aiDraft ? (
+                    aiDraft.body.split(/\n{2,}/).map((para, i) => (
+                      <p key={i} className="whitespace-pre-wrap">{para}</p>
+                    ))
+                  ) : aiError ? (
+                    <p className="text-amber-400">
+                      Couldn't reach Helm AI ({aiError}). The dispute reference and figures below
+                      are drafted from your live computation; you can edit and send manually.
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground italic">
+                      <Loader2 className="h-3.5 w-3.5 inline-block animate-spin mr-1.5 text-violet-400" />
+                      Helm AI is still drafting — content will appear shortly.
+                    </p>
+                  )}
 
-                  {/* Inline line items table */}
+                  {/* Top SKUs sidebar — visual sugar that survives across drafts */}
                   <div className="rounded-lg border border-slate-700 overflow-hidden my-2">
                     <div className="bg-slate-800/60 px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Top 5 Eligible SKUs (of {topSkus.length} shown · full data attached)</div>
                     <table className="w-full text-[10px]">
@@ -592,24 +644,16 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
                           </tr>
                         ))}
                         <tr className="border-t border-slate-700 bg-slate-800/40">
-                          <td colSpan={3} className="px-3 py-1.5 font-semibold text-slate-300">Total (all 3,832 lines — see attachment)</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums font-semibold">$4,694,200</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums font-bold text-emerald-400">$234,710</td>
+                          <td colSpan={3} className="px-3 py-1.5 font-semibold text-slate-300">Total (all {result.totalEligibleLines.toLocaleString()} lines — see attachment)</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums font-semibold">${result.totalEligibleAmount.toLocaleString()}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums font-bold text-emerald-400">${result.expectedAmount.toLocaleString()}</td>
                         </tr>
                       </tbody>
                     </table>
                   </div>
 
-                  <p>
-                    Please review the attached line-level data export and confirm receipt of this credit. We request that the balance be applied to our account or remitted via wire transfer within <strong className="text-foreground">30 days</strong> in accordance with Section 4.2 of the FlexPath SPA agreement.
-                  </p>
-                  <p>
-                    Should you require any additional documentation, reconciliation files, or a joint review call, please do not hesitate to reach out. We are committed to resolving this promptly and maintaining our strong commercial relationship with Trane Technologies.
-                  </p>
-                  <p>
-                    Kind regards,<br />
-                    <strong className="text-foreground">Procurement Finance — Helm Platform</strong><br />
-                    <span className="text-muted-foreground">Auto-drafted by Helm AI Resolver · Ref: HELM-AI-20240312-001</span>
+                  <p className="text-muted-foreground text-[10px]">
+                    Auto-drafted by Helm AI Resolver · Ref: <span className="font-mono text-foreground">{reference}</span>
                   </p>
                 </div>
               </div>
@@ -646,15 +690,15 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
               <div className="flex flex-col gap-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2 justify-center">
                   <Building2 className="h-3.5 w-3.5 text-violet-400" />
-                  <span>Credit claim: <strong className="text-foreground">$234,710.00</strong> · TRAN-SPA-FLEXPATH-Q1</span>
+                  <span>Credit claim: <strong className="text-foreground">${result.expectedAmount.toLocaleString()}</strong> · {result.program?.programCode}</span>
                 </div>
                 <div className="flex items-center gap-2 justify-center">
                   <Mail className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>Reference: <strong className="text-foreground">HELM-AI-20240312-001</strong></span>
+                  <span>Reference: <strong className="text-foreground">{reference}</strong></span>
                 </div>
                 <div className="flex items-center gap-2 justify-center">
                   <Paperclip className="h-3.5 w-3.5 text-amber-400" />
-                  <span>3 attachments included · 3,832 line items</span>
+                  <span>3 attachments included · {result.totalEligibleLines.toLocaleString()} line items</span>
                 </div>
               </div>
               <Button size="sm" variant="outline" className="border-slate-700 text-slate-300 mt-2" onClick={onClose}>Close</Button>

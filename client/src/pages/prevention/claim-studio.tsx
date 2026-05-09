@@ -69,6 +69,7 @@ export default function ClaimStudio() {
   const submitMutation = useMutation({
     mutationFn: async (claimId: number) => {
       const res = await fetch(`/api/claims/${claimId}/submit`, { method: "POST" });
+      if (!res.ok) throw new Error(`Submit failed (${res.status})`);
       return res.json();
     },
     onSuccess: (_, claimId) => {
@@ -81,7 +82,11 @@ export default function ClaimStudio() {
     mutationFn: async () => {
       const readyClaims = draftClaims.filter(c => c.readiness === 100);
       const results = await Promise.allSettled(
-        readyClaims.map(c => fetch(`/api/claims/${c.id}/submit`, { method: "POST" }).then(r => r.json()))
+        readyClaims.map(async (c) => {
+          const r = await fetch(`/api/claims/${c.id}/submit`, { method: "POST" });
+          if (!r.ok) throw new Error(`Submit ${c.id} failed (${r.status})`);
+          return r.json();
+        })
       );
       return results;
     },

@@ -55,6 +55,7 @@ export default function RecoveryAdvancePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ supplierId: 1, expectedCreditIds: eligibleCreditIds, advanceRate: advanceRate / 100 }),
       });
+      if (!res.ok) throw new Error(`Quote failed (${res.status})`);
       return res.json();
     },
     onSuccess: (data) => setQuote(data),
@@ -78,6 +79,7 @@ export default function RecoveryAdvancePage() {
           status: "active",
         }),
       });
+      if (!res.ok) throw new Error(`Accept failed (${res.status})`);
       return res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/recovery-advances"] }),

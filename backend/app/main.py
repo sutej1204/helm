@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import Base, get_engine
-from .routers import claims, expected_credits, programs, suppliers
+from .routers import ai, claims, expected_credits, programs, recon, suppliers
 from .seed import seed as seed_data
 
 settings = get_settings()
@@ -71,6 +71,8 @@ app.include_router(suppliers.router)
 app.include_router(programs.router)
 app.include_router(expected_credits.router)
 app.include_router(claims.router)
+app.include_router(recon.router)
+app.include_router(ai.router)
 
 # ── Static SPA serving ───────────────────────────────────────────────────────
 # Resolve `static_dir` relative to this file so the path works whether the

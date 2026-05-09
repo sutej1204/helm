@@ -22,3 +22,5 @@ services:
         value: app/static
       - key: CORS_ORIGINS
         value: "*"
+      - key: ANTHROPIC_API_KEY
+        sync: false  # paste the rotated key here in the Render dashboard

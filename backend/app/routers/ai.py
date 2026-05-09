@@ -6,9 +6,10 @@
 """
 from __future__ import annotations
 
+import io
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..auth import require_token
@@ -16,6 +17,82 @@ from ..services.anthropic_client import complete
 
 
 router = APIRouter(tags=["ai"], dependencies=[Depends(require_token)])
+
+
+# ── /api/ai/extract-pdf ──────────────────────────────────────────────────────
+
+
+class PdfExtractResponse(BaseModel):
+    filename: str
+    pages: int
+    text: str
+    char_count: int = Field(..., alias="charCount")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+@router.post(
+    "/api/ai/extract-pdf",
+    response_model=PdfExtractResponse,
+    response_model_by_alias=True,
+)
+async def extract_pdf_text(file: UploadFile = File(...)) -> PdfExtractResponse:
+    """Extract plain text from an uploaded PDF using pypdf.
+
+    Used by the Expected Credit Engine page when a credit memo (or any
+    other input) is supplied as a PDF — the frontend ships the file here,
+    receives back text, and feeds that into /api/ai/expected-credit/analyze
+    via the same JSON contract it already uses for CSV uploads.
+    """
+    name = (file.filename or "uploaded.pdf").lower()
+    if not name.endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Expected a .pdf file; got '{file.filename}'.",
+        )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        # Imported lazily so a missing pypdf at import time doesn't crash the
+        # whole router for unrelated AI endpoints.
+        from pypdf import PdfReader  # type: ignore[import-not-found]
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail="pypdf is not installed on the server. Run `pip install pypdf`.",
+        ) from e
+
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        pieces = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text.strip():
+                pieces.append(text)
+        joined = "\n\n".join(pieces).strip()
+    except Exception as e:  # noqa: BLE001 — pypdf throws a wide variety
+        raise HTTPException(
+            status_code=400, detail=f"Could not parse PDF: {e}"
+        ) from e
+
+    if not joined:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "PDF parsed but no extractable text was found — the file is "
+                "probably an image-only scan. Run OCR upstream and re-upload."
+            ),
+        )
+
+    return PdfExtractResponse(
+        filename=file.filename or "uploaded.pdf",
+        pages=len(reader.pages),
+        text=joined,
+        charCount=len(joined),
+    )
 
 
 # ── /api/ai/resolver/draft-email ─────────────────────────────────────────────

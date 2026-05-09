@@ -178,7 +178,60 @@ function sumAmountCol(rows: string[][], colIdx: number): number {
   }, 0);
 }
 
+// PDFs go to the backend's pypdf extractor; the returned text is treated
+// the same as a plain-text upload from there on.
+async function extractPdfText(file: File): Promise<{ text: string; pages: number; charCount: number }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch("/api/ai/extract-pdf", { method: "POST", body: fd });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(`PDF extraction failed (${res.status}): ${txt}`);
+  }
+  return res.json();
+}
+
 async function parseUploadedFile(file: File): Promise<ParsedFile> {
+  // PDF path: extract on backend, then treat the text as the file content.
+  const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+  if (isPdf) {
+    try {
+      const { text, pages, charCount } = await extractPdfText(file);
+      return {
+        name: file.name,
+        sizeKB: Math.round(file.size / 1024),
+        rowCount: pages,
+        headers: ["page"],
+        sampleRows: text.split(/\n\n+/).slice(0, 20).map(p => [p.slice(0, 120)]),
+        rawText: text,
+        totalAmount: 0,
+        detectedAmountCol: -1,
+        detectedSkuCol: -1,
+        detectedCustomerCol: -1,
+        detectedDateCol: -1,
+        status: "ready",
+        errorMsg: undefined,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "PDF parse failed";
+      return {
+        name: file.name,
+        sizeKB: Math.round(file.size / 1024),
+        rowCount: 0,
+        headers: [],
+        sampleRows: [],
+        rawText: "",
+        totalAmount: 0,
+        detectedAmountCol: -1,
+        detectedSkuCol: -1,
+        detectedCustomerCol: -1,
+        detectedDateCol: -1,
+        status: "error",
+        errorMsg: msg,
+      };
+    }
+  }
+
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -1199,9 +1252,9 @@ export default function ExpectedCreditEngine() {
             />
             <FileUploadZone
               label="Credit Memos"
-              description="Previously received credits · CSV, XLS"
+              description="Previously received credits · PDF, CSV, XLS"
               icon={<FileSpreadsheet className="h-4 w-4" />}
-              accept=".csv,.xls,.xlsx,.txt"
+              accept=".pdf,.csv,.xls,.xlsx,.txt"
               file={creditMemosFile}
               onFile={setCreditMemosFile}
               onClear={() => setCreditMemosFile(null)}

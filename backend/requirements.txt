@@ -7,3 +7,5 @@ pydantic>=2.7
 pydantic-settings>=2.4
 python-dotenv>=1.0
 anthropic>=0.39
+pypdf>=5.0
+python-multipart>=0.0.9

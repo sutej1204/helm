@@ -8,8 +8,11 @@ RUN npm ci --no-audit --no-fund
 
 # Copy frontend sources. The Vite config emits into ../dist/public — see
 # vite.config.ts; we re-route the output to /build/dist/public.
+# `attached_assets/` is required because client/src/components/ui/sidebar.tsx
+# imports the Helm logo via the `@assets` Vite alias.
 COPY tsconfig.json vite.config.ts tailwind.config.ts postcss.config.js components.json ./
 COPY client ./client
+COPY attached_assets ./attached_assets
 
 # `VITE_API_URL` is unset because the FastAPI service serves the SPA from the
 # same origin. `VITE_HELM_API_TOKEN` is baked in at build time — pass it via

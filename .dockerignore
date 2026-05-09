@@ -8,6 +8,17 @@ backend/.venv
 backend/__pycache__
 backend/app/__pycache__
 backend/app/routers/__pycache__
+backend/app/services/__pycache__
 **/__pycache__
 **/*.pyc
-attached_assets
+
+# Bloat that the frontend doesn't import — keep them out of the Docker
+# context to shrink the build cache. NOTE: do NOT exclude
+# `attached_assets/` itself — Vite imports the Helm logo from there.
+attached_assets/Pasted-*.txt
+backend/sample_docs
+
+# Local build outputs
+.cache
+*.log
+

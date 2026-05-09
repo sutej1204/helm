@@ -67,34 +67,83 @@ VITE_HELM_API_TOKEN=  # match the backend's HELM_API_TOKEN, or leave empty
 
 ## Deploying to Render
 
-1. Push this repo to GitHub.
-2. In Render: **New → Blueprint** → select your repo → Render reads
-   `render.yaml` and creates a Web Service named `helm`.
-3. After the Blueprint applies, open the service's **Environment** tab and
-   set `DATABASE_URL` to the **Internal Database URL** of your Postgres.
-   (External URL works too but is slower.) Optionally set `HELM_API_TOKEN`
-   to enforce bearer auth.
-4. The first deploy will build the Docker image (~3 min). On boot, the
-   lifespan hook auto-creates tables and seeds the demo data.
-5. Visit your service URL — the SPA loads at `/`, the API lives at
-   `/api/*`, OpenAPI docs at `/api/docs`.
+The repo ships ready for a one-Blueprint deploy. The Postgres database
+is **not** provisioned by `render.yaml` — you should create it manually
+first (or reuse an existing one) and paste the URL into the service.
 
-## API surface (thin slice)
+### One-time setup
 
-| Method | Path                              | Notes                                  |
-|--------|-----------------------------------|----------------------------------------|
-| GET    | /api/health                       | Liveness check                         |
-| GET    | /api/suppliers                    | List all suppliers                     |
-| GET    | /api/suppliers/{id}               | Single supplier                        |
-| GET    | /api/programs                     | All rebate/SPA programs (with agreement + supplier) |
-| GET    | /api/programs/{id}                | Single program                         |
-| GET    | /api/expected-credits             | Computed credits with linked program   |
-| GET    | /api/claims                       | All claims                             |
-| GET    | /api/claims/{id}                  | Single claim                           |
-| POST   | /api/claims                       | Create draft claim (used by Export-to-Claim) |
+1. **Postgres** (skip if you already have one)
+   - Render dashboard → **New → PostgreSQL** → name `helmdb`, plan
+     `Starter`, region `Ohio`.
+   - When it lights up, copy the **Internal Database URL** from the Info
+     tab — that's what the web service will use.
+2. **Web service**
+   - Render dashboard → **New → Blueprint** → connect your GitHub repo.
+   - Render reads `render.yaml` and proposes a Docker Web Service named
+     `helm`. Apply.
+3. **Set required env vars** on the new service's **Environment** tab:
+   | Key                  | Value |
+   |----------------------|-------|
+   | `DATABASE_URL`       | Internal Database URL from step 1 |
+   | `ANTHROPIC_API_KEY`  | from https://console.anthropic.com/settings/keys |
+   | `HELM_API_TOKEN`     | (optional) any random string for shared-token auth |
 
-When `HELM_API_TOKEN` is set, every `/api/*` route except `/api/health` and
-`/api/docs` requires `Authorization: Bearer <token>`.
+   The other env vars in `render.yaml` (`HELM_AUTO_SEED`, `STATIC_DIR`,
+   `CORS_ORIGINS`) have safe defaults baked in.
+4. Trigger a manual deploy (the first Blueprint apply usually does this
+   automatically). The Docker build takes ~3-4 min on Starter:
+   - **Stage 1:** Node 20 builds the React SPA into `dist/public/`.
+   - **Stage 2:** Python 3.12 installs requirements and copies the build
+     into `app/static/`.
+5. On the first boot, the lifespan hook does three things:
+   - `Base.metadata.create_all()` creates the 5 thin-slice tables.
+   - `_apply_pending_migrations()` runs `ALTER TABLE … IF NOT EXISTS` for
+     the upload-analysis columns on `expected_credits`.
+   - `seed()` populates 11 suppliers / 11 agreements / 10 programs / 2
+     expected_credits, plus the AI-Analysis placeholder records used as
+     FK targets for upload-derived data.
+6. Visit your service URL — the SPA loads at `/`, the API lives at
+   `/api/*`, OpenAPI docs at `/api/docs`. Healthcheck is `/api/health`.
+
+### Re-deploying
+
+`git push origin main` triggers a new build automatically. The seed
+function is idempotent (skips when demo data already exists), and the
+migrations are `IF NOT EXISTS` so the schema upgrade is safe to run on
+every boot.
+
+### Build args (optional)
+
+If you set `HELM_API_TOKEN` and want the frontend to send it, you also
+need to bake the matching value into the SPA at build time. On Render:
+**Settings → Build & Deploy → Docker Build Args** → add
+`VITE_HELM_API_TOKEN` with the same value as `HELM_API_TOKEN`.
+Otherwise the SPA sends no auth header.
+
+## API surface
+
+The deployed service exposes:
+
+| Method | Path                                | Purpose |
+|--------|-------------------------------------|---------|
+| GET    | `/api/health`                       | Liveness |
+| GET    | `/api/suppliers` / `/{id}`          | List / get supplier |
+| GET    | `/api/programs` / `/{id}`           | List / get rebate program (with agreement + supplier) |
+| GET    | `/api/expected-credits`             | List computed credits |
+| POST   | `/api/expected-credits/bulk`        | Persist a per-VCSC analysis from an upload run |
+| GET    | `/api/claims` / `/{id}`             | List / get claim |
+| POST   | `/api/claims`                       | Create draft claim (Export-to-Claim button) |
+| POST   | `/api/recon/ap-match/{id}`          | 4-Way Match stub (canned scenarios for invoices 2/3/4) |
+| POST   | `/api/ai/extract-pdf`               | Multipart upload → pypdf text |
+| POST   | `/api/ai/expected-credit/analyze`   | Engine: Python math + tiny AI metadata call |
+| POST   | `/api/ai/agreement/extract`         | AI-extract structured programs from a PDF agreement, persist to DB |
+| POST   | `/api/ai/contracts/extract`         | Standalone "Extract terms" on /contract-ingestion |
+| POST   | `/api/ai/resolver/draft-email`      | AI Resolver: drafts dispute email |
+| POST   | `/api/chat/supply-chain`            | Dashboard chat sidebar |
+
+When `HELM_API_TOKEN` is set, every `/api/*` route except `/api/health`
+and `/api/docs` requires `Authorization: Bearer <token>`.
 
 ## Adding more endpoints
 

@@ -1,0 +1,92 @@
+Here's the build prompt — structured for Replit's agent to parse cleanly. Copy-paste straight in.
+markdown# Build: 4-Way Invoice Match (RECON #1)
+
+## Context
+Helm is a financial operations platform for mid-market wholesale distributors. The app already has a `/matching-engine` route handling three-way matching (PO + Receipt + Invoice). This task adds the fourth leg — matching invoices against the underlying Special Pricing Agreement (SPA) — to catch contract-price violations before payment. Flagged variances route to a Recovery queue.
+
+## Goal
+Ship a demoable 4-way match feature in one sprint. Works end-to-end on seeded data. No live ERP integration in scope.
+
+## Follow existing design system
+Use the current Helm app shell, tokens, components (tables, pills, cards, breadcrumbs, app chrome, tabs). Match the visual language of `/matching-engine`. Do not introduce new patterns.
+
+## Scope — four screens
+
+### 1. AP Inbox · `/ap-inbox`
+Table of incoming invoices. Columns: Supplier · Invoice # · Amount · 4-leg match summary (icon + text) · Status pill (Variance / Verified payable / Processing). Rows clickable → Match Workspace.
+
+### 2. Match Workspace · `/matching-engine/:invoiceId`
+- Breadcrumb (AP Inbox / Supplier / Invoice)
+- Header: supplier, invoice ref, amount, received date, line count; variance pill top-right when applicable
+- 2×2 leg grid: PO · Receipt · Invoice · Vendor Agreement. Each card shows ref, key meta, match state (ok | warn)
+- Line items table: line · SKU · qty · invoice unit · agreement unit · per-line pill. Variance lines highlight; clicking a variance line → Variance Evidence
+
+### 3. Variance Evidence · `/matching-engine/:invoiceId/variance/:lineId`
+- Breadcrumb
+- Header: SKU + qty
+- Four metric cells: Invoice unit · Agreement unit · Per-unit Δ · Total recoverable
+- 2×2 evidence grid:
+  1. SPA clause — ref + verbatim quote
+  2. Signed agreement — counterparty + sign date + file ref
+  3. PO line — PO ref + line meta
+  4. Receipt line — receipt ref + qty meta
+- Action row: `Route to Recovery` (primary) · `Override with reason` (secondary). Primary action creates a Recovery item and navigates to `/recovery`.
+
+### 4. Recovery · `/recovery`
+- Three stat cards: Open recoverable · Recovered MTD · Avg cycle
+- Table: source invoice · supplier · variance type · amount · status pill (New · Credit memo pending · Recovered)
+- Newly routed items show "New · routed today" pill for the session
+
+## Data model
+Supplier   { id, name }
+Agreement  { id, supplierId, ref, signedDate, clauses: [{ ref, text, sku_class, max_unit_price, valid_through }] }
+PO         { id, ref, supplierId, lines: [{ sku, qty, unit_price }] }
+Receipt    { id, ref, poId, lines: [{ sku, qty_received, received_date }] }
+Invoice    { id, ref, supplierId, received_date, total, lines: [{ sku, qty, unit_price }] }
+Variance   { id, invoiceId, lineId, type, per_unit_delta, total_recoverable, status }
+
+## Match logic
+For each invoice line:
+- PO match: SKU + qty present on linked PO
+- Receipt match: SKU + qty present on linked Receipt
+- Agreement match: invoice `unit_price` ≤ matching clause `max_unit_price` for the SKU class
+
+If agreement match fails → emit Variance: `type = "SPA price breach"`, `per_unit_delta = invoice_unit − agreement_unit`, `total_recoverable = delta × qty`.
+
+## Seed data — hero scenario
+- Supplier: Trane Technologies · Invoice INV-44892 · $15,468.00
+- Linked PO-3382, Receipt R-8821
+- Agreement SPA-CARRIER-2024 · clause §4.2(a): *"Distributor program pricing on Carrier 24ABC series shall not exceed $1,247.00 per unit through 31 Dec 2026."*
+- 4 line items; line 3 = Carrier 24ABC6, qty 12, invoiced $1,289, agreement $1,247 → $42/unit delta → **$504 recoverable**
+
+Inbox companions (all clean):
+- Lennox INV-2210 · $8,209.40 · Verified payable
+- Daikin INV-7711 · $22,100.00 · Verified payable
+- Carrier INV-9981 · $4,332.00 · Processing
+- Mitsubishi Electric INV-1182 · $6,750.00 · Verified payable
+
+Recovery pre-seed (so queue isn't empty before demo runs):
+- Carrier INV-44012 · Volume tier missed · $1,287.40 · Credit memo pending
+- Lennox INV-43788 · SPA price breach · $890.00 · Credit memo pending
+- Trane INV-43210 · SPA price breach · $620.00 · Recovered
+- Mitsubishi INV-42884 · Freight terms breach · $315.00 · Recovered
+
+Stat cards: Open recoverable $24,892 · Recovered MTD $61,230 · Avg cycle 14 days.
+
+## Out of scope
+- Real ERP / NetSuite / P21 integration
+- OCR / invoice extraction (assume lines already parsed)
+- Auth, multi-tenancy
+- Credit memo generation beyond the routing action
+- Override-with-reason form (button opens placeholder modal or no-ops)
+- RECONs #2 through #6
+
+## Acceptance criteria
+1. AP Inbox shows Trane row flagged with `Variance · $504` pill
+2. Clicking Trane → Match Workspace shows 3 green legs, 1 warning leg (Vendor Agreement), line 3 highlighted with `−$42 / unit`
+3. Clicking line 3 → Variance Evidence renders 4 metric cells, 4 evidence cards, action buttons
+4. `Route to Recovery` lands on Recovery with the Trane $504 row at the top, `New · routed today` pill
+5. Full path runs in under 90 seconds, no errors, no empty states
+
+## Priority
+This is a customer-facing demo. Visible polish on the four screens above matters more than edge-case handling. If something's not in the acceptance criteria, ship the simplest version that doesn't break.

@@ -1,0 +1,51 @@
+
+
+
+
+
+
+
+Prewave monitors a comprehensive array of over 140 supply chain risk types, organized into various categories to provide a holistic view of potential disruptions. Here's an overview of the primary risk categories and some associated event types:
+Google Cloud
++2
+knowledgebase.prewave.com
++2
+3rdrisk.com
++2
+
+1. Environmental Risks
+Examples: Chemical leakage, deforestation, emission violations, pollution, toxication, waste disposal problems.
+knowledgebase.prewave.com
+
+2. Social Risks
+Examples: Child labor, forced labor, discrimination, labor strikes, protests, worker suicides, wage theft.
+
+3. Governance Risks
+Examples: Corruption, fraud, insider trading, regulatory shutdowns, lawsuits, tax evasion.
+
+4. Financial & Legal Risks
+Examples: Insolvency, credit rating downgrades, mass layoffs, accounting fraud, legal procedures, sanctions.
+knowledgebase.prewave.com
+
+5. Operational Risks
+Examples: Site closures, supplier issues, product recalls, labor shortages, equipment failures.
+
+6. Political & Geopolitical Risks
+Examples: Political unrest, sanctions, trade restrictions, military conflicts, policy changes.
+
+7. Natural Disasters
+Examples: Earthquakes, floods, hurricanes, wildfires, pandemics.
+
+8. Cybersecurity Risks
+Examples: Data breaches, cyberattacks, ransomware incidents, IT system failures.
+
+9. Commodity & Market Risks
+Examples: Price volatility, supply shortages, demand fluctuations, market entry barriers.
+
+10. Regulatory & Compliance Risks
+Examples: Non-compliance with environmental regulations, labor laws, industry standards, and international trade agreements.
+
+Prewave's AI-driven platform continuously scans global data sources in over 50 languages to detect and analyze these risks, providing real-time alerts and insights to help businesses proactively manage their supply chain vulnerabilities. 
+Elite AI Tools
+
+If you need a more detailed breakdown of specific event types within these categories or information on how Prewave's scoring system evaluates these risks, feel free to ask!

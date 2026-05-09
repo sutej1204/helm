@@ -1,0 +1,22 @@
+High-value reports a Vantage Point user is likely to generate
+Audience	Report	What it shows	When it’s used
+Board / C-Suite	Executive Risk & Cash Dashboard	One-page snapshot of composite supplier-risk index, sanctions exposure, and cash unlocked this quarter.	Monthly packs, investor calls
+Working-Capital Opportunity Report	Top 20 AR/AP actions (early-pay, term extension) with projected liquidity gain and ROI.	Treasury planning, funding decisions
+Sustainability / ESG	ESG Performance Scorecard	Average ESG score vs. target, high-risk suppliers, progress on Scope 3 emissions goals.	Annual sustainability report, customer RFPs
+Modern-Slavery / Forced-Labour Compliance Report	List of suppliers flagged for forced-labour indicators, mitigation steps, and audit status.	UK Modern Slavery Act, US Uyghur Forced Labor Prevention Act filings
+Compliance / Legal	Sanctions & Watch-List Screening Log	Full audit trail of hits, false-positive resolutions, and real-time status by supplier.	Regulator inquiries, internal audits
+Adverse-Media & Reputational Events Digest	All negative-news incidents in the last 30 days with severity score and remediation owner.	Weekly risk committees
+Procurement	Supplier 360° Scorecard	For each key vendor: ESG score, delivery reliability, credit health, payment-term history, and current exposure.	Sourcing reviews, contract renewals
+Category Risk Heat-Map	Colour-coded view of risk levels by spend category and region.	Category strategy workshops
+Treasury / Finance	AR Aging & Collections Priority List	Open invoices ranked by predicted payment delay and cash impact.	Daily collections huddles
+AP Term-Change Impact Model	Simulation of DPO changes on liquidity, supplier health, and discount capture.	Quarterly cash-optimisation cycles
+Operations / Continuity	Supply-Chain Disruption Forecast	Probabilistic risk of shipment delay or stoppage by region (port strikes, weather, geopolitical).	Contingency planning
+Audit / External Stakeholders	Regulatory Compliance Certificate	Machine-generated PDF summarising screening coverage, risk classification method, and mitigation actions—time-stamped and immutable.	External audits, customer assurance
+
+These reports cover the core concerns of finance, risk, sustainability, and procurement teams—demonstrating how Vantage Point turns raw trade data into decision-ready intelligence for every stakeholder.
+
+
+
+
+
+

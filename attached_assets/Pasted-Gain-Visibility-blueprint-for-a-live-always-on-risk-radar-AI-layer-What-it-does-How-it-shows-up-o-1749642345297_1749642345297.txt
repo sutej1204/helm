@@ -1,0 +1,35 @@
+Gain Visibility — blueprint for a live, always-on risk-radar
+AI layer	What it does	How it shows up on the dashboard	Typical pay-off*
+1. Data fusion & entity graph	Pipes in internal supplier master, POs & invoices, then stitches them to external feeds: ESG-score APIs (EcoVadis, IntegrityNext), global sanctions/watch-lists (OFAC, EU, HMT) via low-latency screening APIs such as Sanctions.io, and real-time news/social sentiment streams (Signal AI).
+ecovadis.com
+sanctions.io
+signal-ai.com
+integritynext.com
+Coverage widget shows % suppliers mapped and data freshness clock; clicking a node opens the full “supplier passport.”	Single, up-to-date record for every trading partner—no more Excel look-ups.
+2. Risk classification & scoring	NLP models label every incoming article, tweet or filing to one of 50+ risk types (forced labour, corruption, deforestation, cyber breach…). Gradient-boosting model blends these event signals with static ESG scores to create a Composite Risk Index (CRI) 0-100 that updates hourly.	Heat-map world view; hovering a country or supplier tile surfaces its CRI and top drivers (“Labour-rights alert, score +12”).	30-day earlier detection of high-risk suppliers vs manual checks.
+gainfront.com
+3. Live alerting & explainability	Threshold engine triggers red, amber, green alerts; each alert comes with a one-click “Explain” pane that highlights the news headline, sanctions note or ESG metric behind the score change.	Slack/Teams push notification; in-app timeline shows “what changed” with source links.	80 % reduction in false-positive chases; faster triage.
+castellum.ai
+sanctions.io
+4. Scenario & trend analytics	Time-series models forecast CRI drift and simulate knock-ons (e.g., sanction on Tier-2 supplier raises Tier-1 delivery risk + probability-weighted cash-flow hit).	Trend chart beside each supplier; Monte-Carlo panel estimates potential revenue at risk.	Lets procurement act weeks before disruption, cutting impact cost 20-40 %.
+marshmclennan.com
+dla.mil
+5. Workflow & audit trail	Integrated tasks assign an owner, due-date and mitigation playbook; every action is logged for audit/export.	“Open risk tickets” kanban plus PDF-ready due-diligence reports.	Proves compliance to auditors/regulators in minutes, not days.
+
+*Impact ranges aggregated from market studies and vendor benchmarks (EcoVadis, Marsh McLennan Sentrisk, Signal AI). 
+ecovadis.com
+signal-ai.com
+marshmclennan.com
+
+What the user actually sees
+Command-centre map — colour-coded world map with drill-down to supplier clusters.
+
+Live incident feed — real-time ticker of ESG events, sanctions additions, reputational spikes; filters by severity, country, or category.
+
+Supplier passport — side-panel card with CRI trend, ESG sub-scores, latest documents, and linked AP/AR exposure.
+
+Risk backlog — kanban board of open mitigations, owner avatars, SLA clock.
+
+One-click report — instant PDF or XLS extract for auditors, investors, or internal risk committees.
+
+Together these elements turn the Gain Visibility pillar into a true “radar and flight deck”: you know where risk is forming, why it matters, and who is driving the fix—before it hits your cash or compliance scorecard.

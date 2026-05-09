@@ -1,0 +1,925 @@
+Helm Platform — Replit Agent Build Prompt
+Version 1.1
+
+You are extending an existing Helm fintech platform (a React + TypeScript + Express + Drizzle ORM monorepo). The goal is to build out the full operational platform for Helm — an AI-native financial operations platform for mid-market wholesale distributors (HVAC, electrical) — covering the 12-stage distribution transaction lifecycle organised around 5 value creation tools (Recovery, Prevention, Visibility, Financing, Intelligence).
+
+Critical constraint: extend the existing codebase, do not rebuild. Many pages already exist (contract-ingestion, matching-engine, recovery-workflow, payment-term-extension, supplier-passport, working-capital, dashboard). Reuse and extend them. Add new pages only where indicated. Maintain the existing dark-mode aesthetic (Ramp/Mercury-style, emerald accent on slate/zinc base).
+
+
+1. Existing Stack — Use These, Don't Replace
+Frontend: React 18 + TypeScript + Vite, wouter for routing, @tanstack/react-query for data, shadcn/ui + Tailwind CSS, framer-motion for animations, lucide-react icons, recharts for charts, react-simple-maps for maps, next-themes for dark mode.
+Backend: Express.js (server/index.ts, server/routes.ts), in-memory MemStorage class (server/storage.ts), Drizzle ORM with Zod insert schemas (shared/schema.ts), @neondatabase/serverless available for Postgres when needed.
+Existing pages of relevance: dashboard, landing, contract-ingestion, matching-engine, recovery-workflow, payment-optimization, payment-term-extension, working-capital, supplier-passport, supplier-passport-detail, capital-deployment, integrations, financial-os, foundry-powered, palantir-integration.
+Existing schema entities: users, suppliers, risks, compliance, dashboardMetrics, paymentTerms, paymentHistory, paymentOptimization, industryBenchmarks, supplierPassports.
+
+
+2. Conceptual Model — The 12-Stage Lifecycle
+The platform models a single canonical transaction flow that every distributor's business runs on. Every stage is an event in an append-only ledger. Reconciliations are queries across that ledger.
+
+#
+Stage
+Direction
+Document
+1
+Vendor agreement
+Manufacturer ↔ Distributor
+Master + sub-terms (SPA, rebate, chargeback, allowance)
+2
+Purchase order
+Distributor → Manufacturer
+PO
+3
+Goods received
+Manufacturer → Distributor
+Goods receipt (GR)
+4
+Invoice issued
+Manufacturer → Distributor
+Invoice (line per SKU)
+R1
+AP-side match
+—
+Invoice ↔ PO ↔ Receipt ↔ Agreement
+5
+Customer sale
+Distributor → End customer
+Customer invoice
+6
+POS report
+Distributor → Manufacturer
+EDI 867 (sell-through)
+7
+Expected credit calc
+Helm internal
+Computed expected credit
+8
+Claim submitted
+Distributor → Manufacturer
+EDI 844 / rebate file / chargeback
+9
+Adjudication
+Manufacturer reviews
+Approved / partial / rejected / disputed
+10
+Settlement issued
+Manufacturer → Distributor
+Credit memo / deduction / cash / future credit
+R2
+Post-settlement audit
+—
+Settlement ↔ Expected ↔ Submitted claim
+11
+Remittance applied
+—
+Remittance advice tied to open AP
+12
+Net payment
+Distributor → Manufacturer
+ACH / wire / V-card / stablecoin
+
+
+
+3. The 5 Value Creation Tools — How the User Navigates
+The sidebar should have 5 primary value tool sections, each with its own dashboard and 2-4 sub-pages. The 12 stages map into these tools, not as primary navigation.
+
+┌─ Command Center                   (existing /dashboard)
+
+├─ RECOVERY                         (capture money already owed)
+
+│   ├─ 4-Way Invoice Match          (RECON #1, extend /matching-engine)
+
+│   ├─ Settlement Audit             (RECON #2, new)
+
+│   ├─ Claim Recovery               (Stages 9-10, extend /recovery-workflow)
+
+│   └─ Unapplied Cash               (Stage 11, new)
+
+├─ PREVENTION                       (avoid leakage forward-looking)
+
+│   ├─ Expected Credit Engine       (Stage 7, NEW — the core)
+
+│   ├─ Claim Studio                 (Stage 8, new)
+
+│   ├─ Real-time Accruals           (Stage 7 financial view, new)
+
+│   └─ Pricing Audit                (Stage 4 pre-pay, new)
+
+├─ VISIBILITY                       (real-time financial state)
+
+│   ├─ Cash Flow Forecast           (Stages 7-12, new)
+
+│   ├─ Margin Attribution           (Deal Terminal, true vs apparent margin)
+
+│   └─ Settlement Pipeline          (Stages 8-10 timing, new)
+
+├─ FINANCING                        (margin on capital)
+
+│   ├─ Recovery Advance             (NEW — advance vs expected credit)
+
+│   ├─ Payment Term Extension       (extend existing /payment-term-extension)
+
+│   └─ AP BNPL                      (new, Backd-style)
+
+├─ INTELLIGENCE                     (network-effect data)
+
+│   ├─ Rebate Knowledge Graph       (NEW — the moat asset)
+
+│   ├─ Industry Benchmarks          (extend industryBenchmarks table)
+
+│   └─ Contract Library             (extend /contract-ingestion)
+
+├─ ── separator ──
+
+├─ Vendor Agreements                (Stage 1 admin)
+
+├─ Master Data                      (cross-cutting normalisation)
+
+├─ Transaction Browser              (12-stage spine view, NEW)
+
+└─ Integrations                     (existing /integrations)
+
+The existing Landing and Dashboard pages are kept. The five value tools are the new top-level concept.
+
+
+4. Schema Extensions — Add to shared/schema.ts
+Add the following Drizzle tables. Keep existing tables intact. Use pgTable, follow the existing patterns (camelCase TypeScript, snake_case columns, serial PKs, numeric for money, timestamp for dates, Zod insert schemas via createInsertSchema).
+4.1 Vendor agreements + sub-terms
+// Master vendor agreement
+
+export const vendorAgreements = pgTable("vendor_agreements", {
+
+  id: serial("id").primaryKey(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  agreementName: text("agreement_name").notNull(),
+
+  effectiveDate: date("effective_date").notNull(),
+
+  expirationDate: date("expiration_date"),
+
+  status: text("status").notNull().default("active"), // active, expired, pending
+
+  documentUrl: text("document_url"),
+
+  ingestionStatus: text("ingestion_status").notNull().default("parsed"), // parsed, partial, failed
+
+  ingestionConfidence: numeric("ingestion_confidence"), // 0-100
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+  updatedAt: timestamp("updated_at").defaultNow(),
+
+});
+
+// Programs (sub-terms): SPA / chargeback / rebate / allowance
+
+export const programs = pgTable("programs", {
+
+  id: serial("id").primaryKey(),
+
+  agreementId: integer("agreement_id").notNull().references(() => vendorAgreements.id),
+
+  programType: text("program_type").notNull(), // 'spa' | 'chargeback' | 'rebate' | 'allowance'
+
+  programName: text("program_name").notNull(),
+
+  programCode: text("program_code"), // manufacturer's reference code
+
+  baseRate: numeric("base_rate"), // percentage or per-unit
+
+  rateType: text("rate_type"), // 'percent' | 'per_unit' | 'fixed'
+
+  tierStructure: json("tier_structure"), // [{threshold, rate}, ...]
+
+  cap: numeric("cap"),
+
+  eligibleSkus: text("eligible_skus").array(),
+
+  eligibleCustomerClasses: text("eligible_customer_classes").array(), // e.g. 'contractor', 'GPO-X'
+
+  eligibleBranches: text("eligible_branches").array(),
+
+  exclusions: json("exclusions"), // structured exclusion rules
+
+  effectiveDate: date("effective_date").notNull(),
+
+  expirationDate: date("expiration_date"),
+
+  claimDeadlineDays: integer("claim_deadline_days"), // days after period close
+
+  reportingFormat: text("reporting_format"), // 'edi_844', 'edi_867', 'csv', 'portal'
+
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+});
+4.2 Procurement (Stages 2-4)
+export const purchaseOrders = pgTable("purchase_orders", {
+
+  id: serial("id").primaryKey(),
+
+  poNumber: text("po_number").notNull().unique(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  branchCode: text("branch_code"),
+
+  orderDate: date("order_date").notNull(),
+
+  status: text("status").notNull().default("open"), // open, partial, closed, cancelled
+
+  totalAmount: numeric("total_amount").notNull(),
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+});
+
+export const purchaseOrderLines = pgTable("purchase_order_lines", {
+
+  id: serial("id").primaryKey(),
+
+  poId: integer("po_id").notNull().references(() => purchaseOrders.id),
+
+  lineNumber: integer("line_number").notNull(),
+
+  manufacturerSku: text("manufacturer_sku").notNull(),
+
+  distributorSku: text("distributor_sku"),
+
+  description: text("description"),
+
+  quantity: numeric("quantity").notNull(),
+
+  uom: text("uom").notNull(), // each, case, pallet
+
+  unitPrice: numeric("unit_price").notNull(),
+
+  expectedSpaProgram: integer("expected_spa_program").references(() => programs.id),
+
+});
+
+export const goodsReceipts = pgTable("goods_receipts", {
+
+  id: serial("id").primaryKey(),
+
+  receiptNumber: text("receipt_number").notNull().unique(),
+
+  poId: integer("po_id").notNull().references(() => purchaseOrders.id),
+
+  receiptDate: date("receipt_date").notNull(),
+
+  branchCode: text("branch_code"),
+
+  receivedBy: text("received_by"),
+
+  status: text("status").notNull().default("complete"), // complete, partial, exception
+
+});
+
+export const goodsReceiptLines = pgTable("goods_receipt_lines", {
+
+  id: serial("id").primaryKey(),
+
+  receiptId: integer("receipt_id").notNull().references(() => goodsReceipts.id),
+
+  poLineId: integer("po_line_id").notNull().references(() => purchaseOrderLines.id),
+
+  quantityReceived: numeric("quantity_received").notNull(),
+
+  exception: text("exception"), // null, 'short', 'damaged', 'wrong_item'
+
+});
+
+export const invoices = pgTable("invoices", {
+
+  id: serial("id").primaryKey(),
+
+  invoiceNumber: text("invoice_number").notNull().unique(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  poId: integer("po_id").references(() => purchaseOrders.id),
+
+  invoiceDate: date("invoice_date").notNull(),
+
+  dueDate: date("due_date").notNull(),
+
+  totalAmount: numeric("total_amount").notNull(),
+
+  paymentTermsDays: integer("payment_terms_days"),
+
+  status: text("status").notNull().default("open"), // open, matched, exception, paid, disputed
+
+  matchStatus: text("match_status"), // null, 'matched', 'price_variance', 'qty_variance', 'unmatched_po'
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+});
+
+export const invoiceLines = pgTable("invoice_lines", {
+
+  id: serial("id").primaryKey(),
+
+  invoiceId: integer("invoice_id").notNull().references(() => invoices.id),
+
+  lineNumber: integer("line_number").notNull(),
+
+  poLineId: integer("po_line_id").references(() => purchaseOrderLines.id),
+
+  manufacturerSku: text("manufacturer_sku").notNull(),
+
+  quantity: numeric("quantity").notNull(),
+
+  uom: text("uom").notNull(),
+
+  unitPrice: numeric("unit_price").notNull(),
+
+  lineTotal: numeric("line_total").notNull(),
+
+  expectedPrice: numeric("expected_price"), // per agreement
+
+  priceVarianceAmount: numeric("price_variance_amount"), // calculated by Helm
+
+});
+4.3 Sell-through (Stages 5-7)
+export const customerSales = pgTable("customer_sales", {
+
+  id: serial("id").primaryKey(),
+
+  customerInvoiceNumber: text("customer_invoice_number").notNull(),
+
+  endCustomerId: text("end_customer_id").notNull(),
+
+  endCustomerName: text("end_customer_name"),
+
+  endCustomerClass: text("end_customer_class"), // 'contractor', 'commercial', 'GPO-name'
+
+  buyingGroupCode: text("buying_group_code"),
+
+  saleDate: date("sale_date").notNull(),
+
+  branchCode: text("branch_code"),
+
+  totalAmount: numeric("total_amount").notNull(),
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+});
+
+export const customerSaleLines = pgTable("customer_sale_lines", {
+
+  id: serial("id").primaryKey(),
+
+  saleId: integer("sale_id").notNull().references(() => customerSales.id),
+
+  lineNumber: integer("line_number").notNull(),
+
+  distributorSku: text("distributor_sku").notNull(),
+
+  manufacturerSku: text("manufacturer_sku"), // resolved via SKU map
+
+  supplierId: integer("supplier_id").references(() => suppliers.id),
+
+  quantity: numeric("quantity").notNull(),
+
+  uom: text("uom").notNull(),
+
+  unitPrice: numeric("unit_price").notNull(),
+
+  lineTotal: numeric("line_total").notNull(),
+
+  isReturn: boolean("is_return").default(false),
+
+  reversesLineId: integer("reverses_line_id"), // for returns
+
+});
+
+export const posReports = pgTable("pos_reports", {
+
+  id: serial("id").primaryKey(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  periodStart: date("period_start").notNull(),
+
+  periodEnd: date("period_end").notNull(),
+
+  format: text("format").notNull(), // 'edi_867', 'csv', 'portal'
+
+  status: text("status").notNull().default("draft"), // draft, transmitted, acknowledged
+
+  transmittedAt: timestamp("transmitted_at"),
+
+  totalLines: integer("total_lines").notNull(),
+
+  totalAmount: numeric("total_amount").notNull(),
+
+});
+
+// THE CORE TABLE — Helm's expected credit ledger
+
+export const expectedCredits = pgTable("expected_credits", {
+
+  id: serial("id").primaryKey(),
+
+  programId: integer("program_id").notNull().references(() => programs.id),
+
+  saleLineId: integer("sale_line_id").references(() => customerSaleLines.id), // nullable for aggregate programs
+
+  periodStart: date("period_start").notNull(),
+
+  periodEnd: date("period_end").notNull(),
+
+  eligibleSaleAmount: numeric("eligible_sale_amount").notNull(),
+
+  appliedRate: numeric("applied_rate").notNull(),
+
+  appliedTier: text("applied_tier"), // tier name if tiered
+
+  exclusionsAmount: numeric("exclusions_amount").default("0"),
+
+  expectedAmount: numeric("expected_amount").notNull(), // the headline number
+
+  computedAt: timestamp("computed_at").defaultNow(),
+
+  computationVersion: text("computation_version"), // engine version for auditability
+
+  status: text("status").notNull().default("computed"), // computed, claimed, settled, written_off
+
+  claimId: integer("claim_id"), // link to claim once submitted
+
+});
+4.4 Claims, adjudication, settlement (Stages 8-10)
+export const claims = pgTable("claims", {
+
+  id: serial("id").primaryKey(),
+
+  claimNumber: text("claim_number").notNull().unique(),
+
+  programId: integer("program_id").notNull().references(() => programs.id),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  periodStart: date("period_start").notNull(),
+
+  periodEnd: date("period_end").notNull(),
+
+  submittedAmount: numeric("submitted_amount").notNull(),
+
+  expectedAmount: numeric("expected_amount").notNull(), // from expected_credits aggregation
+
+  format: text("format").notNull(), // 'edi_844', 'rebate_csv', 'chargeback', 'portal'
+
+  status: text("status").notNull().default("draft"), // draft, submitted, received, validated, adjudicated, settled, disputed
+
+  submittedAt: timestamp("submitted_at"),
+
+  acknowledgedAt: timestamp("acknowledged_at"),
+
+  adjudicatedAt: timestamp("adjudicated_at"),
+
+  approvedAmount: numeric("approved_amount"),
+
+  rejectedAmount: numeric("rejected_amount"),
+
+  rejectionReasonCodes: text("rejection_reason_codes").array(),
+
+  disputeStatus: text("dispute_status"), // null, 'open', 'resubmitted', 'closed', 'written_off'
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+});
+
+export const claimLines = pgTable("claim_lines", {
+
+  id: serial("id").primaryKey(),
+
+  claimId: integer("claim_id").notNull().references(() => claims.id),
+
+  expectedCreditId: integer("expected_credit_id").references(() => expectedCredits.id),
+
+  lineAmount: numeric("line_amount").notNull(),
+
+  approvedAmount: numeric("approved_amount"),
+
+  rejectionReasonCode: text("rejection_reason_code"),
+
+  rejectionReasonText: text("rejection_reason_text"),
+
+  status: text("status").notNull().default("submitted"), // submitted, approved, partial, rejected
+
+});
+
+// Generalised settlement event — handles all variants
+
+export const settlementEvents = pgTable("settlement_events", {
+
+  id: serial("id").primaryKey(),
+
+  settlementType: text("settlement_type").notNull(), // 'credit_memo', 'deduction', 'cash', 'future_invoice_credit', 'remittance_netting'
+
+  referenceNumber: text("reference_number").notNull(), // CM number, deduction ref, etc.
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  claimId: integer("claim_id").references(() => claims.id),
+
+  invoiceId: integer("invoice_id").references(() => invoices.id), // for AP-side credits
+
+  settlementDate: date("settlement_date").notNull(),
+
+  amount: numeric("amount").notNull(),
+
+  applicationStatus: text("application_status").notNull().default("open"), // open, applied, partial, unapplied
+
+  appliedToInvoiceId: integer("applied_to_invoice_id").references(() => invoices.id),
+
+  notes: text("notes"),
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+});
+4.5 Remittance & payment (Stages 11-12)
+export const remittanceAdvices = pgTable("remittance_advices", {
+
+  id: serial("id").primaryKey(),
+
+  remittanceNumber: text("remittance_number").notNull().unique(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  remittanceDate: date("remittance_date").notNull(),
+
+  totalInvoices: numeric("total_invoices").notNull(),
+
+  totalCredits: numeric("total_credits").notNull(),
+
+  totalDeductions: numeric("total_deductions").notNull(),
+
+  totalAdjustments: numeric("total_adjustments").default("0"),
+
+  netCleared: numeric("net_cleared").notNull(),
+
+  applicationStatus: text("application_status").notNull().default("pending"), // pending, applied, partial, exceptions
+
+  unappliedAmount: numeric("unapplied_amount").default("0"),
+
+  createdAt: timestamp("created_at").defaultNow(),
+
+});
+
+export const remittanceLines = pgTable("remittance_lines", {
+
+  id: serial("id").primaryKey(),
+
+  remittanceId: integer("remittance_id").notNull().references(() => remittanceAdvices.id),
+
+  lineType: text("line_type").notNull(), // 'invoice', 'credit', 'deduction', 'adjustment'
+
+  referenceId: integer("reference_id"), // FK to invoices/credits/etc, polymorphic
+
+  referenceNumber: text("reference_number").notNull(),
+
+  amount: numeric("amount").notNull(),
+
+  applied: boolean("applied").default(false),
+
+});
+
+export const payments = pgTable("payments", {
+
+  id: serial("id").primaryKey(),
+
+  paymentNumber: text("payment_number").notNull().unique(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  paymentDate: date("payment_date").notNull(),
+
+  paymentMethod: text("payment_method").notNull(), // 'ach', 'wire', 'vcard', 'stablecoin', 'check'
+
+  amount: numeric("amount").notNull(),
+
+  remittanceId: integer("remittance_id").references(() => remittanceAdvices.id),
+
+  financingProductUsed: text("financing_product_used"), // null, 'pwt', 'bnpl', 'recovery_advance'
+
+  status: text("status").notNull().default("scheduled"), // scheduled, sent, cleared, failed
+
+});
+4.6 Master data + financing
+// SKU mapping table — manufacturer SKU ↔ distributor SKU
+
+export const skuMappings = pgTable("sku_mappings", {
+
+  id: serial("id").primaryKey(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  manufacturerSku: text("manufacturer_sku").notNull(),
+
+  distributorSku: text("distributor_sku").notNull(),
+
+  uomManufacturer: text("uom_manufacturer"),
+
+  uomDistributor: text("uom_distributor"),
+
+  conversionFactor: numeric("conversion_factor").default("1"),
+
+  confidence: numeric("confidence"), // 0-100, ML confidence in mapping
+
+  verifiedBy: text("verified_by"),
+
+  status: text("status").notNull().default("active"),
+
+});
+
+// End customer master — for eligibility resolution
+
+export const endCustomers = pgTable("end_customers", {
+
+  id: serial("id").primaryKey(),
+
+  endCustomerCode: text("end_customer_code").notNull().unique(),
+
+  name: text("name").notNull(),
+
+  classification: text("classification"), // 'contractor', 'commercial', 'residential'
+
+  buyingGroups: text("buying_groups").array(), // ['GPO-X', 'GPO-Y']
+
+  parentCompanyId: integer("parent_company_id"),
+
+  shipToAddresses: json("ship_to_addresses"),
+
+});
+
+// Recovery advances (Helm's financing product)
+
+export const recoveryAdvances = pgTable("recovery_advances", {
+
+  id: serial("id").primaryKey(),
+
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+
+  expectedCreditIdsCovered: integer("expected_credit_ids_covered").array(),
+
+  totalExpectedCredit: numeric("total_expected_credit").notNull(),
+
+  advanceRate: numeric("advance_rate").notNull(), // e.g. 0.80 for 80% advance
+
+  advanceAmount: numeric("advance_amount").notNull(),
+
+  feePercent: numeric("fee_percent").notNull(),
+
+  feeAmount: numeric("fee_amount").notNull(),
+
+  advanceDate: date("advance_date").notNull(),
+
+  expectedSettlementDate: date("expected_settlement_date").notNull(),
+
+  status: text("status").notNull().default("active"), // active, settled, recourse, written_off
+
+  settledDate: date("settled_date"),
+
+  actualSettlementAmount: numeric("actual_settlement_amount"),
+
+});
+
+Add corresponding createInsertSchema calls and type exports for every table, following the existing pattern in schema.ts.
+
+
+5. Backend — Extend server/routes.ts and server/storage.ts
+For each new table, add:
+
+MemStorage methods: get<Entity>, get<Entity>ById, create<Entity>, update<Entity>, list<Entities> (with filters where useful).
+REST endpoints: GET /api/<entities>, GET /api/<entities>/:id, POST /api/<entities>, PATCH /api/<entities>/:id.
+Domain endpoints (the interesting ones):
+POST /api/expected-credits/compute — runs Helm's calc engine for a given program + period, returns expected credits per sale line.
+POST /api/claims/:id/submit — moves a draft claim to submitted, generates EDI 844 payload (mock for now).
+POST /api/claims/:id/adjudicate — accepts adjudication outcome (approved/partial/rejected with reason codes), creates settlement event.
+POST /api/remittance/:id/apply — runs cash application against open AP, returns matched/unmatched lines.
+POST /api/recon/four-way-match/:invoiceId — runs RECON #1 (4-Way Invoice Match) for an invoice, returns variance per leg.
+POST /api/recon/settlement-audit/:claimId — runs RECON #2 for a settled claim, returns variance.
+POST /api/recovery-advance/quote — given a set of expected credits, returns advance quote with fee.
+
+
+6. Frontend — New & Extended Pages
+6.1 Top-level navigation update
+Update client/src/components/layout/app-layout.tsx sidebar to use the 5 value tools structure shown in Section 3. Use lucide icons: RotateCcw (Recovery), Shield (Prevention), Eye (Visibility), Banknote (Financing), Brain (Intelligence). Keep existing Command Center, Integrations, and admin items.
+
+Each value tool has a dashboard (the section landing page) and 2-4 sub-pages. Use the existing dashboard styling pattern (animated stat cards, dark cards on slate-950 background, emerald accents).
+6.2 Five value tool dashboards
+Each follows the same structural template:
+
+4 KPI stat cards at top (the headline numbers)
+A primary visualisation (chart or table specific to the tool)
+A "current opportunities" or "active items" feed
+Quick links into the sub-pages
+/recovery — Recovery Dashboard
+KPIs: Open recovery $, YTD recovered $, Active claims count, Avg days to recover.
+
+Primary viz: Stacked bar chart by month showing recovered / pending / aged amounts.
+
+Active feed: Top 10 highest-value open recovery items across AP variance, settlement variance, claim queue, and unapplied cash.
+
+Sub-pages:
+
+/recovery/4-way-match — Extends existing /matching-engine. The four-leg match: Invoice ↔ PO ↔ Receipt ↔ Vendor Agreement. The fourth leg (vs Agreement) is what differentiates Helm from Zip/Coupa, which only do three-way. Table with all four match statuses per invoice line, variance amount per leg, recoverable flag. Drill-in shows the relevant agreement clause for the agreement-leg variance.
+/recovery/settlement-audit — RECON #2. Table of settled claims showing: expected $ vs settled $ vs variance, with reason codes for partials and rejections. Filter by program type, supplier, date range. Drill-in to a row shows the four-amount chain: Owed → Accrued → Claimed → Credited.
+/recovery/claim-recovery — Extends existing /recovery-workflow. Add columns for original expected amount and variance. Add a "Resubmit" button that pre-fills a corrected claim using current master data.
+/recovery/unapplied-cash — Stage 11 unapplied bucket. Table of remittance lines that didn't tie to open AP. For each unapplied line, show: amount, supplier, date, suggested matches (top 3 candidates with confidence scores), action buttons (apply, dispute, write-off).
+/prevention — Prevention Dashboard
+KPIs: Real-time accrued expected credit $, Programs at risk of underclaiming, Days to next claim deadline, % POS lines with master data issues.
+
+Primary viz: Funnel showing: Eligible POS lines → Passed eligibility → Rate applied → Tier applied → Net of exclusions → Expected credit. Show drop-off at each stage.
+
+Active feed: Programs with claim deadlines in next 14 days, sorted by expected $ at risk.
+
+Sub-pages:
+
+/prevention/expected-credit-engine — THE CENTREPIECE. This is Helm's core IP made visible. Layout:
+Top: program selector dropdown, period picker, supplier filter.
+Left panel: the calc engine pipeline (5 steps) shown as a vertical flow (matches the Stage 7 diagram). Each step shows: lines in, lines out, drop-off, drop-off reasons.
+Right panel: the running expected-credit total with breakdown by SKU/customer.
+Bottom: table of POS lines with eligibility status per line, expandable to show why each line did/didn't qualify. Columns: sale date, end customer, SKU (mfr + dist), qty, $ amount, eligibility flags, applied rate, tier, exclusions, line expected credit.
+"Recompute" button + version history (computation_version field).
+/prevention/claim-studio — Stage 8 claim drafting and submission. List of draft claims grouped by supplier × program × period. For each claim: review expected credits included, master data check, format selector (EDI 844 / CSV / portal), submit button. Submission generates a mock EDI payload preview.
+/prevention/accruals — Real-time accrual booking view. Shows journal entry preview for each program's accrued expected credit. Group by supplier. Export-to-GL button. Compare current period vs prior period.
+/prevention/pricing-audit — Stage 4 pre-payment pricing check. Flags invoices about to be paid where price doesn't match agreement. "Hold for review" / "Approve" / "Dispute" actions.
+/visibility — Visibility Dashboard
+KPIs: Forecast credits next 30/60/90 days, Forecast payments next 30/60/90 days, Margin attribution coverage %, Settlement pipeline aging.
+
+Primary viz: Forward-looking cash flow chart showing expected credit inflows + AP outflows + financing impact, weekly buckets for next 13 weeks.
+
+Sub-pages:
+
+/visibility/cash-flow-forecast — Treasury view. Forecast table by week. Adjustable confidence intervals. Scenario toggle (advance / no advance, PwT / no PwT).
+/visibility/margin-attribution — Deal Terminal pattern. Two-layer view. Portfolio table (top): all SKUs (toggleable to customer / supplier / transaction grain) with columns for apparent margin, true margin, gap dollars, gap percent. Sort by gap dollars. Heatmap toggle by category. Deal Terminal drill-in (right panel on row click): vertical stack of margin components from top to bottom — apparent margin, +program credits earned, −program credits missed (recoverable line, links to Recovery), −settlement adjustments, −AP variances, −operational adjustments (freight/tax/UOM), −capital cost (days-to-settle × cost-of-capital rate), = true margin. Gap to apparent at the bottom, dollarised. Every component line is hyperlinked to its source in the underlying ledger. Capital cost rate is configurable per customer in Settings.
+/visibility/settlement-pipeline — Stage 8-10 timing waterfall. Shows: claims submitted but not adjudicated, adjudicated but not settled, settled but not applied. Aging buckets (0-30, 31-60, 61-90, 90+).
+/financing — Financing Dashboard
+KPIs: Active advance balance, Active PwT balance, YTD financing margin earned, Available headroom.
+
+Primary viz: Stacked area chart by month showing advance / PwT / BNPL volumes.
+
+Sub-pages:
+
+/financing/recovery-advance — NEW PRODUCT. Shows pool of verified expected credits eligible for advance. Slider to set advance rate (default 80%), shows fee + net advance. "Quote" button calls POST /api/recovery-advance/quote. "Execute advance" creates recoveryAdvances row.
+/financing/payment-term-extension — Extends existing /payment-term-extension. Add: an "underwritten payable balance" panel that shows the portion of AP that's been verified by RECON #1 (eligible for higher PwT advance rates).
+/financing/ap-bnpl — Backd-style term financing for procurement. List of POs eligible for BNPL term (12/18/24 month). Calculator shows monthly cost.
+/intelligence — Intelligence Dashboard
+KPIs: Contracts in graph, Unique programs catalogued, Manufacturers covered, Cross-customer benchmark coverage.
+
+Primary viz: Force-directed graph (use d3 or react-force-graph) showing contracts → programs → SKUs → customers as a network. Click a node to filter.
+
+Sub-pages:
+
+/intelligence/rebate-knowledge-graph — NEW MOAT ASSET. Interactive graph view. Browse by manufacturer, drill into program structures. Each program shows: tier structure, claim format, typical settlement timing, success rate across the customer base (anonymised). Search programs by attribute.
+/intelligence/benchmarks — Extends existing industryBenchmarks table. Add benchmarks for: typical leakage % by category, avg days to settle by manufacturer, claim rejection rates by program type. Comparison view: this customer vs industry.
+/intelligence/contract-library — Extends existing /contract-ingestion. Add: a "diff against template" view showing how this customer's contract compares to the modal contract for that manufacturer (using the knowledge graph).
+6.3 Cross-cutting pages
+/agreements — Vendor agreement admin. List of agreements per supplier. Drill-in shows extracted programs. Re-ingest / edit programs. Confidence score per program from ingestion.
+/master-data — Three tabs: SKU mappings, End customers, Buying groups. Each is a CRUD interface. Show alignment quality scores. Bulk import from CSV.
+/transactions — The 12-stage spine view. Pick a transaction (filter by PO, by invoice, by date, by supplier) and see all 12 stages of its lifecycle in a vertical timeline matching the spine diagram. Each stage shows the relevant document with link. Visual highlights for the two reconciliation moments. This is the "explain what happened" view for any specific transaction.
+
+
+7. Seed Data — Make the Demo Impressive
+The platform is useless without a populated demo dataset. Generate seed data in server/storage.ts MemStorage constructor. Aim for realistic mid-market HVAC distributor scale.
+
+Suppliers (8-10):
+
+Carrier (large mfr, complex programs)
+Trane (large mfr, SPA-heavy)
+Lennox
+Rheem
+Mitsubishi Electric
+Honeywell (controls)
+Johnson Controls
+Daikin Plus 2 small/regional (e.g. "Pacific HVAC Supply", "Northeast Coil Co").
+
+For each supplier:
+
+1 master agreement
+3-6 programs (mix of SPA, rebate, chargeback, allowance)
+Realistic tier structures (e.g. "5% base, 7% above $500k YTD volume")
+
+Transactions (covering 6 months):
+
+~150 POs across all suppliers
+~140 goods receipts (some partial)
+~145 invoices (mostly matched, ~10 with variances)
+~600 customer sales (sell-through)
+3-4 POS reports per supplier (monthly batch)
+Computed expected credits for the latest 2 periods
+~30 claims (mix of statuses)
+~25 settlement events
+3 remittance advices (one per recent month)
+~120 payments
+
+Specific demo-worthy scenarios to include:
+
+A "find money" moment for Recovery: One supplier (Carrier) has $87k of underpaid Q1 rebate visible in RECON #2 — variance traceable to a specific tier mis-application.
+A "prevent leakage" moment for Prevention: One program (Trane SPA) has a claim deadline in 3 days with $124k of unclaimed eligible expected credits.
+A "forward visibility" moment for Visibility: Cash flow chart shows a $340k credit inflow expected in week 4 that the customer hadn't planned for.
+A "financing wedge" moment for Financing: A $250k recovery advance available against verified Carrier expected credits, showing 72-day expected wait → advance now for 1.5% fee.
+An "unapplied cash" moment for Recovery: Lennox remittance has $34k unapplied because of SKU map mismatch on three lines.
+A "knowledge graph" moment for Intelligence: Show that 14 customers in the graph use Carrier's "ContractorPro" SPA program, with a 23% claim rejection rate industry-average and this customer's rejection rate at 41% — flag the gap.
+A "true margin reveal" moment for Visibility (Deal Terminal): The residential split system category shows apparent margin averaging 22% but true margin averaging 19% — a $1.4M gap across the trailing twelve months. Drilling into the worst-gap SKU (Carrier 24ABC636A003) opens the Deal Terminal showing apparent 24% / true 18% / gap 6 points = $250/unit, with the largest contributor being missed SPA credits ($180/unit) caused by an end-customer classification issue. This is the demo's closing punchline — the dollarised gap a CFO needs to fund the project.
+
+
+8. Design System Constraints
+Visual style
+Dark mode is the default and primary aesthetic. Light mode optional.
+Background: slate-950 / zinc-950 base. Cards on slate-900/50 with slate-800 borders.
+Accent colour: emerald-500 for primary actions and positive metrics.
+Status colours (existing pattern, keep consistent):
+emerald: positive/recovered/approved
+amber: pending/at-risk/warning
+red: critical/denied/rejected
+blue: informational/filed/submitted
+slate: neutral/draft
+Typography: Existing font stack. Use font-mono for amounts and IDs. Tabular-nums for tables.
+Animation: Keep framer-motion use light. Animated stat counter on dashboards. Pulse on live items. No flashy entrances on page-level renders.
+Charts: recharts only. Match the existing dark theme (axis lines slate-700, grid slate-800).
+Maps: react-simple-maps with the existing countries-110m.json topojson.
+Icons: lucide-react only.
+Sidebar: Collapsible. Active route highlighted with emerald accent border-left.
+Design tenets (cross-cutting product principles)
+These are the non-visual rules that should be visible on most pages and tested in design review:
+
+Show the gap. Every reconciliation surface displays an apparent figure, a reconciled figure, and the dollarised difference. The 4-Way Invoice Match shows agreement-vs-invoice. Settlement Audit shows the four-amount chain. Expected Credit Engine shows eligible-vs-claimed. Margin Attribution shows apparent-vs-true. Gap dollars must be visible without drilling in — that's the headline number on every page of this kind.
+
+Line-level audit trail always reachable. Any number on any screen — a recovery total, an expected credit, a true margin — must be drillable in two clicks or fewer to the underlying ledger events that produced it. No black boxes. This is what makes the platform defensible to auditors and disputable suppliers.
+
+Apparent figures should never stand alone. If the UI is showing gross margin, it should also be showing true margin. If it's showing claimed amount, it should also be showing expected amount. Standalone apparent numbers create the false confidence the platform exists to dismantle.
+
+Master data issues surface where they cause harm, not where they live. A SKU mapping problem should appear on the Expected Credit Engine page (where it caused a line to drop) or the Unapplied Cash page (where it caused a remittance miss), not buried in the Master Data admin page. The admin page is for resolution, not detection.
+
+
+9. Build Phasing
+Build in this order so each phase is demonstrable:
+
+Phase 1 — Schema and backend (no UI changes yet):
+
+Add all new tables to shared/schema.ts.
+Extend server/storage.ts with MemStorage methods.
+Add REST endpoints in server/routes.ts.
+Generate seed data covering the 7 demo scenarios.
+Ensure npm run dev starts cleanly.
+
+Phase 2 — Navigation restructure:
+
+Update app-layout.tsx sidebar with the 5 value tools.
+Create empty placeholder pages for all 5 dashboards + sub-pages.
+Wire up routing in App.tsx.
+
+Phase 3 — The Expected Credit Engine (Stage 7):
+
+This is the centrepiece. Build /prevention/expected-credit-engine first because it's the unique-to-Helm value-prop.
+Implement the 5-step calc engine pipeline.
+Wire up POST /api/expected-credits/compute.
+
+Phase 4 — Value tool dashboards:
+
+Build the 5 dashboards.
+Wire up KPIs, primary viz, and active feeds.
+
+Phase 5 — Sub-pages and reconciliations:
+
+Build out the sub-pages in priority order: Recovery sub-pages first (the wedge), then Prevention, then Visibility, then Financing, then Intelligence.
+Implement RECON #1 and RECON #2 logic.
+
+Phase 6 — Cross-cutting pages:
+
+Master data, agreements, transaction browser.
+
+Phase 7 — Polish:
+
+Animations, empty states, loading states.
+Demo walkthrough flow (a "tour" mode that hits the 7 demo scenarios in order).
+
+
+10. Acceptance Criteria
+The build is done when:
+
+The sidebar shows 5 value tools as primary navigation.
+All 5 dashboards render with populated KPIs and primary visualisations.
+The Expected Credit Engine (/prevention/expected-credit-engine) can compute expected credits for any seeded program × period and show the 5-step pipeline with drop-off reasons.
+RECON #1 (/recovery/4-way-match) can flag a variance against the vendor agreement on at least one seeded invoice (the differentiating fourth leg).
+RECON #2 (/recovery/settlement-audit) shows the four-amount chain (Owed → Accrued → Claimed → Credited) for at least one settled claim with a non-zero variance.
+The Recovery Advance product (/financing/recovery-advance) can quote an advance against verified expected credits.
+The Knowledge Graph (/intelligence/rebate-knowledge-graph) renders a network view of contracts → programs → SKUs.
+The Transaction Browser (/transactions) can show all 12 stages for at least one seeded transaction, matching the spine layout.
+All 7 demo scenarios are reachable and visibly impressive.
+No console errors. npm run check passes TypeScript with no errors.
+
+
+Notes
+Keep MemStorage as the default storage. Postgres via Neon is available but not required — the prompt assumes in-memory for now to keep the demo zero-config.
+Mock the EDI payloads. Real EDI 844/867 generation isn't needed; show JSON or human-readable previews.
+No real AI calls. The "AI processing" animations and computed values can use deterministic mock logic. The OpenAI dependency is in package.json but don't actually call it for this build.
+No auth. Keep passport configured but routes open for the demo.
+Focus on visual impressiveness over edge-case correctness. This is a fundraising and design-partner demo, not production code.
+

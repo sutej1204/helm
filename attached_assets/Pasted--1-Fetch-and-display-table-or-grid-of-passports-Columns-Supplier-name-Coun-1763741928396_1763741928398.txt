@@ -1,0 +1,164 @@
+
+1) Fetch and display table or grid of passports:
+   - Columns:
+     - Supplier name
+     - Country
+     - Status
+     - KYC status
+     - ESG risk
+     - Risk band
+     - Identified leakage (annual $)
+     - Working capital opportunity score
+     - SCF eligible? (Yes/No)
+     - Margin leakage alert %
+
+2) Search:
+   - Text search by supplier name (client-side filter is fine).
+
+3) Filters (basic):
+   - Filter by `compliance.kycStatus`
+   - Filter by `financing.scfEligible`
+   - Filter by `compliance.esgRisk` or `financing.riskBand`
+
+4) Navigation:
+   - Clicking a row opens `/supplier-passports/:id`.
+
+5) “Create New”:
+   - A primary button: **New Supplier Passport** → navigates to `/supplier-passports/new`.
+
+6) Overview / Aggregation section at the top:
+   - Show metrics computed from all passports:
+     - Total suppliers
+     - Suppliers with KYC = Verified
+     - Total identified leakage (sum of `identifiedLeakageAnnualUSD`)
+     - Total supplier credits earned (`automation.supplierCreditsEarnedUSD`)
+     - Total cash flow recovery (`automation.cashFlowRecoveryUSD`)
+     - Count of suppliers with active `agenticActionFlags` (length > 0)
+     - Average margin leakage alert %
+   - Display as a stats grid / cards using existing design patterns.
+
+==================================================
+6. Detail View (5-Layer Passport)
+==================================================
+
+Create `SupplierPassportDetail` for `/supplier-passports/:id`.
+
+Structure:
+
+- Top header/card:
+  - Supplier name, country, industry
+  - Status badge (Active/Pending/On Watchlist)
+  - Risk band badge
+  - KYC status badge
+  - SCF eligible indicator
+
+- Below header, use either:
+  - 5 collapsible panels, OR
+  - 5 tabs
+  representing each layer:
+
+(1) Identity & Compliance
+- Show all compliance fields.
+- Visually emphasize high-risk values (e.g., PEP flag, high ESG/forcedLaborRisk, sanctionsHits > 0).
+- Display expiry date and “KYC refresh needed” if in the past.
+
+(2) Contract Performance & Value Leakage
+- Show contracted payment terms, discounts, rebates.
+- Show average price deviation %, rebate utilisation %, identified leakage annual $.
+- Show “Why you’re leaking” as a short explanatory line composed from the data (e.g., “Paying on average 12 days earlier than terms; low rebate utilisation”).
+
+(3) Payment Behavior & Working Capital
+- Show:
+  - Actual average payment days vs contracted days.
+  - Early/late/on-time percentages.
+  - Payment volatility score.
+  - Working capital opportunity score.
+- Optionally show a simple visual bar or comparison (using existing UI patterns).
+
+(4) Financing & Capital Access
+- Show:
+  - SCF, invoice finance, dynamic discounting eligibility.
+  - Risk band, indicative funding limit, spread.
+  - Funding readiness score.
+  - Blocking barriers list (“KYC expired”, “insufficient history”, etc.).
+- Show a small label such as:
+  - “Ready for financing”
+  - or “Requires compliance update before funding”
+
+(5) Automation & Agentic Actions
+- Show:
+  - Supplier credits earned / pending
+  - Rebates due
+  - Cash flow recovery to date
+  - Margin leakage alert %
+  - List of `agenticActionFlags` as badges
+- Show an “Action history” log:
+  - Simple array with date + description (hardcode a few examples in mock data).
+- Add small CTAs:
+  - Buttons like “Trigger rebate recovery”, “Notify procurement”, “Offer financing”, “Initiate KYC refresh”.
+  - For now these can:
+    - Open a simple modal confirming the action, and
+    - Append a new entry to the local action history array for that supplier in the mock data.
+
+Editing:
+- Provide an **Edit** button on the page.
+- Edit mode toggles fields into form controls grouped by layer.
+- On save, call `updateSupplierPassport`.
+- Handle basic validation for numbers (percentages 0–100, no negatives, etc.).
+
+==================================================
+7. Create / Edit Flow
+==================================================
+
+Create `SupplierPassportCreate` for `/supplier-passports/new` (or use a modal if that’s normal in this project).
+
+Form behaviour:
+- Capture:
+  - Basic identity: name, country, industry, initial status.
+  - Minimal required compliance fields (kycStatus, ESG risk, forcedLaborRisk, etc.).
+  - Key contract fields (contracted terms, initial leakage estimate).
+  - Key payment behaviour fields (you can default some values).
+  - Financing basics: scfEligible, riskBand, indicativeFundingLimitUSD.
+  - Automation basics: supplierCreditsEarnedUSD (default 0), etc.
+- Use sensible defaults where appropriate to keep the form manageable.
+- On submit:
+  - Call `createSupplierPassport`.
+  - Redirect to the new detail view.
+
+Consider reusing components between create and edit forms.
+
+==================================================
+8. State Management & Hooks
+==================================================
+
+- Use whatever is already in the repo: React Query, Redux, Context, etc.
+- If nothing exists, a simple local state + `useEffect` pattern is fine.
+- Keep components clean and split larger pages into smaller subcomponents:
+  - e.g. `ComplianceSection`, `ContractSection`, `PaymentSection`, `FinancingSection`, `AutomationSection`.
+
+==================================================
+9. Responsiveness & Styling
+==================================================
+
+- Ensure list, detail, and forms render correctly on both desktop and mobile.
+- Use the project’s existing spacing, typography, and colours.
+- Avoid inline styling if the project norm is CSS modules or Tailwind.
+
+==================================================
+10. Developer Notes / Summary
+==================================================
+
+At the end, please:
+- List the new/updated files (types, services, pages/components, router updates).
+- Explain briefly:
+  - Where the `SupplierPassport` type lives.
+  - Where the mock backend/service is.
+  - How to navigate to list, detail, and create views.
+  - Where to plug in real APIs later.
+
+The key expectation: 
+After your changes, the app should provide a fully functional **Supplier Passport** module with:
+- Data model,
+- CRUD operations,
+- Overview/aggregation,
+- Layered detail view reflecting the 5-layer design above.

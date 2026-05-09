@@ -1,0 +1,44 @@
+Optimise Cash (AR & AP) — turning AI insight into working-capital gains
+AI layer	What it actually does (AR & AP only)	Typical impact*
+1. Unified data graph	Ingests and links ERP, invoicing, bank, FX/rate curves, supplier-credit scores, and customer-payment histories at line-item level.	Builds a single “source of cash truth.”
+2. Predictive analytics	• Cash-flow forecaster models incoming (AR) and outgoing (AP) cash daily up to 13 weeks.
+• Customer pay-propensity model scores every open invoice for “early / on-time / late” risk.
+• Supplier liquidity model spots vendors likely to accept early-pay offers.	±5 % forecast accuracy window (vs ±20 % before) 
+mckinsey.com
+3. Prescriptive optimisers	• Dynamic-discount/SCF optimiser runs constrained optimisation on discount curves, supplier cost of capital, and buyer liquidity to surface the best mix of pay early for 2 % vs extend on SCF.
+• Payment-term optimiser benchmarks DPO / DSO vs peers and suggests specific suppliers or customers to extend/shorten terms with minimal relationship risk.
+• Collections prioritiser ranks AR follow-ups by predicted cash yield and churn risk.
+• Cross-party netting flags offset opportunities when a counter-party is both customer and supplier.	‒5-15 days DSO reduction 
+highradius.com
+crfonline.org
+
++5-10 days DPO extension without jeopardising supply 
+mckinsey.com
+
+Early-payment discounts deliver ≈ 36 % annualised return on idle cash 
+afponline.org
+4. Scenario engine	Monte-Carlo tests (rate hikes, recession, FX swing) to size liquidity buffers and choose hedge or early-pay in each scenario.	Keeps cash buffer lean yet safe.
+5. Execution hooks	APIs push new terms, discount offers, SCF invitations, and dunning workflows straight to your ERP/TMS and supplier/customer portals; results loop back for model retraining.	Value captured in-flight, not just in reports.
+
+*Benchmarks from McKinsey working-capital studies, HighRadius case data, and AFP dynamic-discounting research. 
+mckinsey.com
+highradius.com
+afponline.org
+
+End-to-end example
+Detect – AI spots $15 m tied up because 120 customers usually pay 10 days late; model predicts 70 % will accept 1 %–10-day discount.
+
+Simulate – Discount optimiser shows $10 m net liquidity gain vs status quo; scenario engine confirms resilience under a 150 bp rate hike.
+
+Execute – Platform emails dynamic-discount offers and creates SCF options for suppliers; collections bot focuses reps on the 30 highest-risk invoices.
+
+Monitor – Dashboard tracks real cash unlocked, re-scores behaviour, and fine-tunes offers weekly.
+
+Why it matters to the CFO
+Immediate cash release: 1–3 % of annual revenue freed within 6–12 months.
+
+Lower financing cost: Smart early-pay earns double-digit equivalent yield while preserving supplier health.
+
+Stronger relationships: Data-driven terms feel fair—driving higher supplier participation and faster customer payments.
+
+Bottom line: by focusing AI on just two levers—Accounts Receivable and Accounts Payable—your finance team can continuously convert trapped working capital into strategic cash, without touching inventory.

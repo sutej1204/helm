@@ -1,0 +1,75 @@
+You are helping me modify an existing web app for my startup, Vista.
+
+Goal: Add a new **“Supplier Passport”** tab/section to the site and wire it into the existing navigation.
+
+Please do the following:
+
+1. Inspect the current codebase to understand:
+   - How the main navigation / tabs are implemented
+   - How pages/sections are structured and styled (components, CSS/Tailwind/etc.)
+   - The existing routing pattern (e.g. React Router, Next.js pages, or simple SPA sections)
+
+2. Add a new navigation item:
+   - Label: **Supplier Passport**
+   - Position: place it alongside the other main product tabs (e.g. after “Product” or “Platform”, keeping the style consistent)
+   - Make sure clicking it navigates to /supplier-passport (or the equivalent route/section pattern used in the project).
+
+3. Create a new **Supplier Passport** page/section component.
+   - Reuse the existing design system: same typography, spacing, buttons, and layout patterns as the other product pages.
+   - The page should have:
+     
+     (A) Hero section
+     - Title: **Supplier Passport: Vista’s Atomic Unit of Intelligence**
+     - Short subtitle:  
+       “A living, AI-powered identity for every supplier, unifying compliance, contracts, payment behavior, and financing into a single source of truth.”
+     
+     (B) Short intro paragraph
+     Use something like:
+     “The Supplier Passport is the atomic unit of Vista intelligence. For each supplier, Vista builds a living profile that connects who they are (compliance), what you’ve agreed (contracts), how you actually trade (payments), and what capital is available (financing). These passports can be aggregated to give you a unified, real-time view of your entire supply chain and how it interacts with the world.”
+
+     (C) 4-pillars feature grid
+     Create a 2x2 or 4-column responsive grid describing the four parts of the passport:
+
+     1) **Compliance (KYC / KYB)**
+        - “Verified supplier identity, UBO checks, sanctions and PEP screening.”
+        - “ESG and forced-labour risk signals.”
+        - “Expiry dates and refresh cycles managed automatically.”
+
+     2) **Contract Analysis (Value Leakage)**
+        - “AI reads contracts to extract key commercial terms.”
+        - “Identifies gaps between agreed terms and real-world behavior.”
+        - “Surfaces value leakage in pricing, payment terms, and rebates.”
+
+     3) **Payment Terms & Behavior**
+        - “Compares contracted terms to actual payment behavior.”
+        - “Highlights early payments, delays, and volatility.”
+        - “Turns raw AP data into actionable supplier performance signals.”
+
+     4) **Financing Options**
+        - “Shows which suppliers are eligible for supply chain finance or invoice financing.”
+        - “Links supplier risk and performance to real financing offers.”
+        - “Helps Treasury and private credit providers price and deploy capital.”
+
+     (D) “Why it matters” / benefits section
+     Add a short section with 3–4 bullets (or cards) explaining why this is a powerful wedge:
+
+     Suggested copy:
+     - **One living profile per supplier** – No more scattered spreadsheets, PDFs, and siloed tools.
+     - **Instant visibility on risk and leakage** – See compliance gaps, contract leakage, and payment friction in one place.
+     - **Ready for financing** – The same data that powers intelligence also underwrites working capital and private credit.
+     - **Aggregate to a real-time network view** – Combine thousands of passports into a single view of supply chain risk and liquidity.
+
+4. Make the page responsive and consistent:
+   - Match existing breakpoints, spacing, and typography.
+   - Ensure the new tab and page work cleanly on mobile and desktop.
+   - Do not introduce new UI libraries; rely on whatever is already in the project.
+
+5. Clean code requirements:
+   - Use the same language/framework conventions as the rest of the app (e.g. React + TypeScript if that’s already used).
+   - Keep components small and readable.
+   - Export the new Supplier Passport page/section and ensure it is correctly wired into the router / main layout.
+
+After implementing, briefly summarise:
+- Which files you changed/added
+- How the new navigation and route are wired up
+- How to adjust the copy later if I want to tweak the text.

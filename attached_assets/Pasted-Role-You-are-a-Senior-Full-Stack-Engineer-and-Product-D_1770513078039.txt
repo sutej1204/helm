@@ -1,0 +1,52 @@
+Role: You are a Senior Full-Stack Engineer and Product Designer. Project: Build "Helm," an AI-driven Supplier Spend Orchestration Platform.
+
+Core Vision: Create a high-fidelity, interactive dashboard that visualizes how AI agents resolve supply chain friction across thousands of suppliers. The UI should look like a "Mission Control" for a CFO.
+
+Key Features to Build:
+
+The "Live Agent Feed": A scrolling side-panel or notification center showing real-time "Agent Actions" (e.g., "Sentiment Agent detected frustration from Supplier A," "Contract Agent matched $50k Credit Note," "Financing Agent secured liquidity via Partner Network").
+
+Supplier Insight Card (The Deep Dive): A detailed view for a specific supplier (e.g., "Supplier A") that displays:
+
+Sentiment Score: A health gauge based on "ingested emails."
+
+The Conflict: A text snippet of a "frustrated email" about payment terms.
+
+The Resolution: A visual "Trade" toggle showing: [Early Payment via Embedded Finance] <— exchanged for —> [Term Extension to Net-60].
+
+Global Metrics Bar:
+
+Total Managed Spend: $10T Market Context.
+
+Working Capital Unlocked: (Live counter).
+
+Active Micro-Negotiations: (e.g., 5,342).
+
+The "Orchestration" Map: A simple, clean visualization showing data flowing between Inbox -> Helm AI -> ERP (NetSuite) -> Lending Partners.
+
+Technical Requirements:
+
+Framework: React with Tailwind CSS.
+
+Icons: Use lucide-react for a modern look.
+
+Animation: Use framer-motion for the "Live Feed" to make it feel like the AI is working in the background.
+
+Theme: "Dark Mode" fintech aesthetic—deep grays, slate, with "Helm Blue" or "Emerald" accents for successful actions.
+
+The User Journey for the Demo: When I click "Execute Orchestration," show a sequence where:
+
+An email is "read."
+
+A hidden credit note is "found."
+
+The embedded financing is "triggered."
+
+The dashboard updates to show the Net-30 to Net-60 term shift and a green "Relationship Restored" status.
+
+Tips for using this in Replit:
+Iterate on the "Scale": If the first version looks too simple, tell the Agent: "Make this look like it's managing 5,000 suppliers at once. Add a map or a high-density list of active 'Agent Negotiations'."
+
+Focus on the "Why": Ask the Agent to add tooltips that explain the financial logic, such as: "Why pay early? To secure long-term capital efficiency."
+
+Would you like me to refine any of the specific UI components, like how the "Lending Partner" integration is visualized?

@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.*
+backend/.env
+backend/.venv
+backend/__pycache__
+backend/app/__pycache__
+backend/app/routers/__pycache__
+**/__pycache__
+**/*.pyc
+attached_assets

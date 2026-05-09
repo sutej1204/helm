@@ -1,0 +1,31 @@
+
+"Build a sophisticated Fintech Dashboard for 'Helm,' a supplier intelligence platform. Use React, Tailwind CSS, and Lucide-React for icons.
+Core Features needed:
+
+Sidebar Navigation: Dashboard, Supplier Portfolio, Capital Deployment, Integrations.
+Main Dashboard: A 'Command Center' feel. Top stats should show 'Total Spend Managed', 'Working Capital Opportunity ($)', and 'At-Risk Relationships'.
+The 'Magic' Feature (Supplier Intelligence View): Create a detailed profile page for 'ACME Manufacturing'. This must show a 'Relationship Health Score' (radial progress bar) and an 'Intelligence Feed' that synthesizes data from 3 sources:
+ERP: Shows payment history and upcoming $100k invoice.
+Zendesk/Email: Shows a sentiment analysis snippet ('Supplier frustrated about 12-day payment lag').
+Contract (CLM): Highlights a '2/10 Net 30' discount clause found by AI.
+The Action Button: A prominent 'Deploy Capital & Resolve Issues' button that, when clicked, shows a modal confirming a $100k payment, capturing a $2,000 discount, and triggering an automated 'Issue Resolved' notification to the supplier.
+Design Aesthetic: Professional, high-trust, dark-mode-leaning or clean 'Enterprise SaaS' (think Ramp or Mercury). Use a dense, data-rich layout."
+How to polish the Replit output for the Demo
+Once Replit generates the code, make these three manual tweaks to ensure the 2-minute demo kills:
+
+1. The "Logic" Visualization
+Don't just show the result; show the "thinking." In your SupplierProfile component, add a small "Processing" animation that mimics AI scanning files.
+
+2. The Capital Deployment Modal
+This is your "Ramp" moment. Make sure the modal explicitly breaks down the math:
+
+Invoice: $100,000
+Gross Discount (2%): +$2,000
+Financing Cost: -$150
+Net Gain: $1,850
+3. The "Live Feed"
+On the main dashboard, add a "Live Events" ticker on the right side.
+
+2 mins ago: AI identified 2/10 Net 30 terms in Global Logistics contract.
+5 mins ago: Sentiment alert: "Negative" detected in email from 'Premier Parts'.
+1 hour ago: $50,000 Capital deployed to 'Tech Corp'.

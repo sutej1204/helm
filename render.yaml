@@ -1,0 +1,24 @@
+# Render Blueprint — single Docker web service.
+#
+# DB note: this blueprint does NOT provision a Postgres because you already
+# created `helmdb` via the dashboard. Wire the connection by setting
+# DATABASE_URL on the service (Render dashboard → Environment) — use the
+# Internal URL since both services live on Render.
+services:
+  - type: web
+    name: helm
+    runtime: docker
+    plan: starter
+    region: ohio
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # paste the Internal Database URL from the helmdb dashboard
+      - key: HELM_API_TOKEN
+        sync: false  # optional: set a shared token; frontend must match
+      - key: HELM_AUTO_SEED
+        value: "true"
+      - key: STATIC_DIR
+        value: app/static
+      - key: CORS_ORIGINS
+        value: "*"

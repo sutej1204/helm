@@ -1,0 +1,73 @@
+Build an interactive web app mockup for the “Working Capital Optimisation” module within Rotar — an AI-native supply chain intelligence platform.
+
+The page should be designed for procurement, treasury, and finance users. It must showcase how businesses can unlock working capital and reduce risk by adjusting supplier payment terms and accessing embedded financing solutions like payables financing and receivables factoring.
+
+Key Features to Include:
+1. Term Optimisation Engine
+Upload or simulate supplier payables data (e.g., JSON or sample table)
+
+Visualize suppliers by current terms (30/60/90 days), size, risk rating, and strategic tier
+
+Provide AI-driven recommendations to extend payment terms where viable
+
+Slider to simulate cash flow impact of extending terms across the supplier base
+
+2. Receivables Financing Panel
+Display AR ledger with buyers, invoice values, payment dates, and credit scores
+
+Select invoices for non-recourse factoring
+
+Show advance rate, discount rate, and funding cost
+
+Calculate improvement to DSO and liquidity released
+
+3. Payables Financing Tool (replaces Dynamic Discounting)
+Show list of suppliers eligible for early payment via third-party funding (Orbian-style)
+
+For each supplier, display:
+
+Invoice value
+
+Proposed early pay date
+
+Applicable discount/funding cost
+
+Effective APR
+
+Simulate executing the early payment using external funding vs internal cash
+
+Output cash flow impact and supplier adoption analytics
+
+4. Scenario Simulator
+Users adjust DSO, DPO, and % of invoices financed
+
+View real-time impact on:
+
+Free cash flow
+
+Net working capital
+
+Supply chain risk exposure
+
+Include “Generate Board Report” button to export a PDF summary
+
+5. Action Execution Panel
+Simulate workflows to:
+
+“Extend Terms & Notify Suppliers”
+
+“Request Payables Financing”
+
+“Finance Receivables”
+
+Mock API console output showing backend logic (for demo purposes)
+
+Design Considerations:
+Clean, enterprise-grade UI using Tailwind CSS or ShadCN
+
+Focus on actionable financing decisions, not just analytics
+
+Show how Rotar bridges the gap between data and funding
+
+Goal:
+Showcase how Rotar enables businesses to turn supplier data into financing strategy—allowing CFOs and treasury teams to unlock cash, reduce cost of capital, and enhance resilience—with Orbian as the embedded funding rail.

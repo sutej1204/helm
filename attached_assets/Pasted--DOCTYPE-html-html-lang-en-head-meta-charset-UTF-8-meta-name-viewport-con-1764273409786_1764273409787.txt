@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vista Supplier Credit Passport (AI-Enhanced)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use Inter font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .card {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+            transition: transform 0.2s;
+        }
+        .metric-value.negative {
+            color: #ef4444; /* Red 500 */
+        }
+        .metric-value.positive {
+            color: #10b981; /* Emerald 500 */
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <!-- Header -->
+    <header class="mb-8">
+        <h1 class="text-3xl font-extrabold text-gray-900 flex items-center">
+            <svg class="w-8 h-8 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            Vista Financial OS
+        </h1>
+        <p class="text-lg text-gray-500">Global Tech Solutions Ltd. - Supplier Credit Passport</p>
+    </header>
+
+    <main class="space-y-10">
+
+        <!-- CORE CREDIT PASSPORT (Existing Vista Data) -->
+        <div class="card bg-white p-6 rounded-xl border border-gray-100">
+            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                Supplier Profile & Credit Summary
+                <span class="ml-3 px-3 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">ACTIVE</span>
+            </h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm text-gray-700">
+                <p><strong>Vendor ID:</strong> GTS-1004A</p>
+                <p><strong>Risk Band:</strong> A (Low Risk)</p>
+                <p><strong>Payment Terms (Contracted):</strong> Net 60</p>
+                <p><strong>Actual Avg. Payment Days:</strong> 62 days</p>
+                <p><strong>KYC Status:</strong> Verified (Q3 2024)</p>
+                <p><strong>Compliance Status:</strong> All Clear</p>
+            </div>
+        </div>
+        
+        <!-- ARDINA INTEGRATION: REBATE RECONCILIATION METRICS -->
+        <div class="card bg-white p-6 rounded-xl border border-gray-100">
+            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                <svg class="w-5 h-5 mr-2 text-red-500" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-8a1 1 0 00-2 0v5a1 1 0 002 0v-5zm3-5a1 1 0 00-2 0v8a1 1 0 002 0V5z" clip-rule="evenodd"></path></svg>
+                AI Financial Leakage Analysis
+            </h2>
+            <p class="text-gray-500 mb-4 text-sm">Real-time identification of missed revenue and reconciliation variances.</p>
+            
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                
+                <!-- Metric 1: Total Variance -->
+                <div class="p-3 bg-red-50 rounded-lg">
+                    <p class="text-xs font-medium text-red-600">Total Variance (YTD)</p>
+                    <p class="metric-value negative text-xl sm:text-2xl font-extrabold mt-1">
+                        -$21,242
+                    </p>
+                    <p class="text-xs text-red-500">-17.3% under expected rebate</p>
+                </div>
+
+                <!-- Metric 2: Expected Rebate -->
+                <div class="p-3 bg-indigo-50 rounded-lg">
+                    <p class="text-xs font-medium text-indigo-600">Expected Rebate</p>
+                    <p class="metric-value text-xl sm:text-2xl font-extrabold mt-1 text-indigo-700">
+                        $122,620
+                    </p>
+                    <p class="text-xs text-indigo-500">Based on reconciled sales</p>
+                </div>
+                
+                <!-- Metric 3: Received Rebate -->
+                <div class="p-3 bg-yellow-50 rounded-lg">
+                    <p class="text-xs font-medium text-yellow-600">Received Rebate</p>
+                    <p class="metric-value text-xl sm:text-2xl font-extrabold mt-1 text-yellow-700">
+                        $101,378
+                    </p>
+                    <p class="text-xs text-yellow-500">From Credit Memos</p>
+                </div>
+
+                <!-- Metric 4: Leakage Opportunities -->
+                <div class="p-3 bg-red-50 rounded-lg">
+                    <p class="text-xs font-medium text-red-600">Total Leakage Items</p>
+                    <p class="metric-value text-xl sm:text-2xl font-extrabold mt-1 text-red-700">
+                        5
+                    </p>
+                    <p class="text-xs text-red-500">Open exceptions requiring action</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ARDINA INTEGRATION: AI EXCEPTION TASK LIST -->
+        <div class="card bg-white p-6 rounded-xl border border-gray-100">
+            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                <svg class="w-5 h-5 mr-2 text-orange-500" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 10a1 1 0 011-1h10a1 1 0 010 2H5a1 1 0 01-1-1zM4 15a1 1 0 011-1h10a1 1 0 010 2H5a1 1 0 01-1-1z"></path></svg>
+                Active AI Exception Tasks
+            </h2>
+            <p class="text-gray-500 mb-4 text-sm">Actionable tasks generated by AI for immediate credit recovery.</p>
+
+            <div id="exception-list" class="space-y-4">
+                <!-- Exception Item 1 -->
+                <div class="border-l-4 border-red-500 bg-red-50 p-4 rounded-lg flex justify-between items-start flex-col sm:flex-row">
+                    <div class="mb-2 sm:mb-0">
+                        <p class="font-semibold text-red-800">Under-Credited Rebate (Q3 2024)</p>
+                        <p class="text-sm text-red-600">Variance: -$21,242.29. **Recommendation: Request short-pay correction from vendor.**</p>
+                    </div>
+                    <div class="flex space-x-2 flex-shrink-0">
+                        <button onclick="draftEmail('Under-Credited Rebate', 21242.29)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-1.5 px-3 rounded-full transition duration-150 shadow-md">
+                            Draft AI Email
+                        </button>
+                        <button onclick="resolveTask(this)" class="bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold py-1.5 px-3 rounded-full transition duration-150">
+                            Resolve
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Exception Item 2 -->
+                <div class="border-l-4 border-orange-500 bg-orange-50 p-4 rounded-lg flex justify-between items-start flex-col sm:flex-row">
+                    <div class="mb-2 sm:mb-0">
+                        <p class="font-semibold text-orange-800">Missing Credit Memo for 3 Eligible Sales Lines</p>
+                        <p class="text-sm text-orange-600">Potential Recovery: $3,591.76. **Recommendation: Email vendor for missing credit memo.**</p>
+                    </div>
+                    <div class="flex space-x-2 flex-shrink-0">
+                        <button onclick="draftEmail('Missing Credit Memo', 3591.76)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-1.5 px-3 rounded-full transition duration-150 shadow-md">
+                            Draft AI Email
+                        </button>
+                        <button onclick="resolveTask(this)" class="bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold py-1.5 px-3 rounded-full transition duration-150">
+                            Resolve
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Exception Item 3 -->
+                <div class="border-l-4 border-yellow-500 bg-yellow-50 p-4 rounded-lg flex justify-between items-start flex-col sm:flex-row">
+                    <div class="mb-2 sm:mb-0">
+                        <p class="font-semibold text-yellow-800">Vendor Code Mismatch (POS ID: 084)</p>
+                        <p class="text-sm text-yellow-600">Minor $89.00 variance. **Recommendation: Review transaction for manual correction.**</p>
+                    </div>
+                    <div class="flex space-x-2 flex-shrink-0">
+                         <button onclick="draftEmail('Code Mismatch', 89.00)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-1.5 px-3 rounded-full transition duration-150 shadow-md">
+                            Draft AI Email
+                        </button>
+                        <button onclick="resolveTask(this)" class="bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-semibold py-1.5 px-3 rounded-full transition duration-150">
+                            Resolve
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Draft Email Modal (Custom replacement for alert/confirm) -->
+    <div id="email-modal" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div class="bg-white p-6 rounded-xl w-full max-w-lg card">
+            <h3 class="text-xl font-bold mb-4 text-gray-800">AI Drafted Vendor Email</h3>
+            <p id="modal-content" class="text-sm text-gray-700 mb-4 border border-gray-200 p-3 rounded-lg bg-gray-50 max-h-60 overflow-y-auto"></p>
+            <div class="flex justify-end space-x-3">
+                <button onclick="closeModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 text-sm font-semibold py-2 px-4 rounded-full transition duration-150">Close</button>
+                <button onclick="copyToClipboard()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2 px-4 rounded-full transition duration-150">Copy to Clipboard</button>
+            </div>
+             <p id="copy-message" class="text-xs text-center text-green-600 mt-2 opacity-0 transition duration-300">Copied!</p>
+        </div>
+    </div>
+
+    <script>
+        // --- Modal Functions ---
+        const emailModal = document.getElementById('email-modal');
+        const modalContent = document.getElementById('modal-content');
+        const copyMessage = document.getElementById('copy-message');
+
+        function draftEmail(exceptionType, amount) {
+            const emailBody = `
+                Dear Vendor Team,
+
+                Vista's Financial OS has identified a variance in the recent credit memo processing related to your account (GTS-1004A).
+
+                **Exception Type:** ${exceptionType}
+                **Discrepancy Amount:** -$${amount.toFixed(2)}
+
+                Vista's analysis indicates we were under-credited by this amount based on our mutual program agreements and the following verified sales data (Attached CSV/PDF):
+
+                1. **Program Rate:** 8.5%
+                2. **Reconciled Sales Volume:** $1,532,761.00
+                3. **Expected Rebate:** $122,620.88
+
+                Please review the attached reconciliation document and process the necessary correction to resolve this $${amount.toFixed(2)} discrepancy.
+
+                Best regards,
+                Vista Financial Operations
+            `;
+            
+            modalContent.innerHTML = emailBody.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            emailModal.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            emailModal.classList.add('hidden');
+            copyMessage.classList.add('opacity-0');
+        }
+
+        function copyToClipboard() {
+            // Get the plain text from the modal content
+            const textToCopy = modalContent.innerText;
+            
+            // Use execCommand for broader iframe compatibility
+            const tempInput = document.createElement('textarea');
+            tempInput.value = textToCopy;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            
+            try {
+                document.execCommand('copy');
+                copyMessage.classList.remove('opacity-0');
+                setTimeout(() => copyMessage.classList.add('opacity-0'), 2000);
+            } catch (err) {
+                console.error('Could not copy text: ', err);
+            } finally {
+                document.body.removeChild(tempInput);
+            }
+        }
+        
+        // --- Task Resolution Function ---
+        function resolveTask(button) {
+            const taskItem = button.closest('.border-l-4');
+            const taskHeader = taskItem.querySelector('.font-semibold');
+            
+            // Visual feedback: mark as resolved/pending
+            taskItem.classList.remove('border-red-500', 'bg-red-50', 'border-orange-500', 'bg-orange-50', 'border-yellow-500', 'bg-yellow-50');
+            taskItem.classList.add('border-green-500', 'bg-green-50');
+            
+            // Update text
+            taskHeader.textContent = taskHeader.textContent.replace('(Q3 2024)', '(Resolved)');
+            
+            // Disable buttons
+            const buttons = taskItem.querySelectorAll('button');
+            buttons.forEach(btn => {
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+                btn.classList.remove('hover:bg-indigo-700', 'hover:bg-gray-300');
+            });
+
+            // Update leakage count (simplified)
+            const leakageCountElement = document.querySelector('.metric-value.text-xl.sm\\:text-2xl.font-extrabold.mt-1.text-red-700');
+            let currentCount = parseInt(leakageCountElement.textContent);
+            if (currentCount > 0) {
+                leakageCountElement.textContent = currentCount - 1;
+            }
+        }
+
+    </script>
+</body>
+</html>

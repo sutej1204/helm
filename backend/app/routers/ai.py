@@ -98,6 +98,22 @@ async def extract_pdf_text(file: UploadFile = File(...)) -> PdfExtractResponse:
 # ── /api/ai/resolver/draft-email ─────────────────────────────────────────────
 
 
+class TopMismatchLine(BaseModel):
+    """One row of context — usually the most-underpaid product codes — passed
+    so the drafted email can reference specific figures rather than generic
+    program-level totals."""
+
+    vcsc: str
+    sales_amount: float = Field(..., alias="salesAmount")
+    applied_rate_pct: float = Field(..., alias="appliedRatePct")
+    expected_credit: float = Field(..., alias="expectedCredit")
+    received_credit: float = Field(..., alias="receivedCredit")
+    mismatch: float
+    status: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class ResolverDraftRequest(BaseModel):
     program_name: str = Field(..., alias="programName")
     program_code: str = Field(..., alias="programCode")
@@ -110,6 +126,15 @@ class ResolverDraftRequest(BaseModel):
     applied_tier: str = Field(..., alias="appliedTier")
     supplier_name: str = Field(..., alias="supplierName")
     computation_version: str | None = Field(default=None, alias="computationVersion")
+    # Optional — populated when the engine ran on uploaded docs so the email
+    # can quote specific underpaid codes rather than generic program totals.
+    recoverable_amount: float | None = Field(default=None, alias="recoverableAmount")
+    total_received_credit: float | None = Field(default=None, alias="totalReceivedCredit")
+    credit_memo_number: str | None = Field(default=None, alias="creditMemoNumber")
+    credit_memo_date: str | None = Field(default=None, alias="creditMemoDate")
+    top_mismatches: list[TopMismatchLine] = Field(
+        default_factory=list, alias="topMismatches"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -125,36 +150,71 @@ class ResolverDraftResponse(BaseModel):
     response_model=ResolverDraftResponse,
 )
 def draft_resolver_email(req: ResolverDraftRequest) -> ResolverDraftResponse:
-    """Drafts a professional dispute email for the supplier credit recovery."""
+    """Drafts a professional dispute email for the supplier credit recovery.
+
+    Two scenarios:
+      A) Caller provides only program-level totals (the demo case, no upload):
+         email is general-purpose, citing the program code and headline credit
+         amount.
+      B) Caller also provides recoverable_amount, top_mismatches, and the
+         credit memo metadata (the upload case): email is much more specific
+         — it references the exact memo number, the underpayment vs the memo,
+         and quotes the most-underpaid product codes by VCSC.
+    """
     system = (
-        "You are a senior procurement-finance analyst at a distribution company. "
-        "You write concise, professional dispute emails to suppliers about owed credits. "
-        "Output ONLY a JSON object with keys 'subject', 'body', 'reference'. "
-        "The subject line MUST start with the program code. "
-        "The body is plain-text email body, no HTML, ~6-9 short paragraphs, "
-        "with a polite-but-firm tone, citing specific figures from the input. "
-        "The reference is a short tracking ID like HELM-AI-YYYYMMDD-NNN."
+        "You are a senior procurement-finance analyst at a distribution "
+        "company. You write concise, professional dispute emails to "
+        "suppliers about owed credits.\n\n"
+        "Output ONLY a JSON object with keys 'subject', 'body', "
+        "'reference'.\n"
+        "  - The subject line MUST start with the program code (or "
+        "'CREDIT RECOVERY' if the program code is 'AI-ANALYSIS' or empty), "
+        "and include the supplier name and headline dollar amount.\n"
+        "  - The body is plain-text email body (no HTML), 6-9 short "
+        "paragraphs, polite-but-firm tone. Cite SPECIFIC figures from the "
+        "input. When the input contains 'top_mismatches' or "
+        "'credit_memo_number', mention them by name in the body — naming "
+        "specific VCSC codes that were underpaid is far more credible than "
+        "a vague program-level dispute.\n"
+        "  - When recoverable_amount is provided, frame the email around "
+        "that figure (the mismatch between expected and received credit), "
+        "not just the gross expected amount.\n"
+        "  - The reference is a short tracking ID of the form "
+        "HELM-AI-YYYYMMDD-NNN."
     )
-    user = json.dumps(
-        {
-            "supplier": req.supplier_name,
-            "program_name": req.program_name,
-            "program_code": req.program_code,
-            "period": req.period_label,
-            "expected_credit_usd": req.expected_amount,
-            "eligible_purchase_value_usd": req.eligible_amount,
-            "eligible_lines": req.eligible_lines,
-            "total_input_lines": req.total_input_lines,
-            "applied_rate_pct": req.applied_rate,
-            "applied_tier": req.applied_tier,
-            "computation_version": req.computation_version,
-        },
-        indent=2,
-    )
+    payload = {
+        "supplier": req.supplier_name,
+        "program_name": req.program_name,
+        "program_code": req.program_code,
+        "period": req.period_label,
+        "expected_credit_usd": req.expected_amount,
+        "eligible_purchase_value_usd": req.eligible_amount,
+        "eligible_lines": req.eligible_lines,
+        "total_input_lines": req.total_input_lines,
+        "applied_rate_pct": req.applied_rate,
+        "applied_tier": req.applied_tier,
+        "computation_version": req.computation_version,
+    }
+    if req.recoverable_amount is not None:
+        payload["recoverable_amount_usd"] = req.recoverable_amount
+    if req.total_received_credit is not None:
+        payload["total_received_credit_usd"] = req.total_received_credit
+    if req.credit_memo_number:
+        payload["credit_memo_number"] = req.credit_memo_number
+    if req.credit_memo_date:
+        payload["credit_memo_date"] = req.credit_memo_date
+    if req.top_mismatches:
+        payload["top_mismatches"] = [m.model_dump(by_alias=True) for m in req.top_mismatches]
+
+    user = json.dumps(payload, indent=2)
     raw = complete(system=system, user=user, max_tokens=1500)
     parsed = _force_json(raw)
+    fallback_code = req.program_code if req.program_code and req.program_code != "AI-ANALYSIS" else "CREDIT RECOVERY"
     return ResolverDraftResponse(
-        subject=parsed.get("subject", f"{req.program_code} Credit Recovery — {req.period_label}"),
+        subject=parsed.get(
+            "subject",
+            f"{fallback_code} — {req.supplier_name} — {req.period_label}",
+        ),
         body=parsed.get("body", raw),
         reference=parsed.get("reference", "HELM-AI-DRAFT"),
     )
@@ -276,6 +336,11 @@ class ExpectedCreditAnalyzeResponse(BaseModel):
     period_label: str | None = Field(default=None, alias="periodLabel")
     pos_lines_total: int = Field(..., alias="posLinesTotal")
     pos_lines_eligible: int = Field(..., alias="posLinesEligible")
+    # Optional metadata extracted by the model from the uploaded docs.
+    supplier_name: str | None = Field(default=None, alias="supplierName")
+    detected_period: str | None = Field(default=None, alias="detectedPeriod")
+    credit_memo_number: str | None = Field(default=None, alias="creditMemoNumber")
+    credit_memo_date: str | None = Field(default=None, alias="creditMemoDate")
 
 
 @router.post(
@@ -311,15 +376,26 @@ def analyze_expected_credit(
         "  - 'underpaid'  : received < expected by more than 5%\n"
         "  - 'overpaid'   : received > expected by more than 5%\n"
         "  - 'unclaimed'  : received_credit == 0 and expected > 0\n\n"
-        "Return ONLY a single JSON object with keys: totalSales, "
-        "totalExpectedCredit, totalReceivedCredit, totalMismatch, "
-        "recoverableAmount (sum of positive mismatches across underpaid + "
-        "unclaimed codes), mismatchPercent (totalMismatch / "
-        "totalExpectedCredit × 100), weightedAvgRebatePct, posLinesTotal, "
-        "posLinesEligible, perCodeBreakdown (array of {vcsc, salesAmount, "
+        "Return ONLY a single JSON object with keys:\n"
+        "  totalSales, totalExpectedCredit, totalReceivedCredit, "
+        "totalMismatch, recoverableAmount (sum of positive mismatches "
+        "across underpaid + unclaimed codes), mismatchPercent "
+        "(totalMismatch / totalExpectedCredit × 100), "
+        "weightedAvgRebatePct, posLinesTotal, posLinesEligible, "
+        "perCodeBreakdown (array of {vcsc, salesAmount, "
         "appliedRebatePct, expectedCredit, receivedCredit, mismatch, "
         "status, programCodes}), summary (one-paragraph English "
-        "narrative). All numbers as numbers, not strings. Output JSON only."
+        "narrative).\n"
+        "  ALSO include these metadata fields when extractable:\n"
+        "    supplierName       — the manufacturer/vendor named in the "
+        "agreement (e.g. 'BBB Industries', 'Trane Technologies')\n"
+        "    detectedPeriod     — concise period label inferred from the "
+        "POS dates (e.g. 'May–Sep 2024', 'Q3 2024')\n"
+        "    creditMemoNumber   — memo number from the credit memo "
+        "(string, e.g. '3373974')\n"
+        "    creditMemoDate     — issue date from the credit memo "
+        "(human-readable, e.g. '23-SEP-2024')\n"
+        "All numbers as numbers, not strings. Output JSON only."
     )
 
     user = (
@@ -357,6 +433,10 @@ def analyze_expected_credit(
     parsed.setdefault("posLinesEligible", 0)
     parsed.setdefault("perCodeBreakdown", [])
     parsed.setdefault("summary", "Analysis returned no narrative.")
+    parsed.setdefault("supplierName", None)
+    parsed.setdefault("detectedPeriod", None)
+    parsed.setdefault("creditMemoNumber", None)
+    parsed.setdefault("creditMemoDate", None)
     parsed["periodLabel"] = req.period_label
 
     return ExpectedCreditAnalyzeResponse(**parsed)

@@ -58,6 +58,25 @@ interface RichComputeResult {
   lineRecords: LineRecord[];
   computationVersion: string;
   source: "seed" | "upload";
+  // Populated when the engine ran on uploaded docs:
+  supplierName?: string;
+  detectedPeriod?: string;
+  creditMemoNumber?: string;
+  creditMemoDate?: string;
+  totalReceivedCredit?: number;
+  recoverableAmount?: number;
+  perCodeBreakdown?: AnalyzeResponseCode[];
+}
+
+interface ExtractedMetadata {
+  documentType?: "pdf" | "csv";
+  memoNumber?: string;
+  memoDate?: string;
+  totalAmount?: string;
+  lineCount?: number;
+  pageCount?: number;
+  topLines?: string[];
+  detectedKeywords?: string[];
 }
 
 interface ParsedFile {
@@ -74,6 +93,25 @@ interface ParsedFile {
   detectedDateCol: number;
   status: "idle" | "parsing" | "ready" | "error";
   errorMsg?: string;
+  extracted?: ExtractedMetadata;
+}
+
+// Pull a few high-signal fields out of an extracted credit-memo PDF.
+// Pure regex — fast, no AI roundtrip — used for the hover tooltip.
+function extractMemoMetadata(text: string, pages: number): ExtractedMetadata {
+  const md: ExtractedMetadata = { documentType: "pdf", pageCount: pages };
+  const numMatch = text.match(/NUMBER[\s:]*([A-Za-z0-9-]+)/i);
+  if (numMatch) md.memoNumber = numMatch[1];
+  const dateMatch = text.match(/DATE[\s:]*([\d]{1,2}[-\s/][A-Za-z]{3,9}[-\s/][\d]{2,4}|[\d]{4}-[\d]{2}-[\d]{2})/i);
+  if (dateMatch) md.memoDate = dateMatch[1];
+  const totalMatch = text.match(/TOTAL\s+AMOUNT[\s:]*\$?([-\d,]+\.\d{2})/i);
+  if (totalMatch) md.totalAmount = `$${totalMatch[1]}`;
+  // Count rows that look like line items (digit, then a code, then an amount).
+  const lineMatches = text.match(/^\s*\d+\s+\S+/gm) ?? [];
+  md.lineCount = lineMatches.length || undefined;
+  // Top lines (first non-empty 5 paragraphs, trimmed) for hover preview.
+  md.topLines = text.split(/\n+/).filter(l => l.trim().length > 4).slice(0, 6).map(l => l.trim().slice(0, 80));
+  return md;
 }
 
 // ─── Static data ──────────────────────────────────────────────────────────────
@@ -169,6 +207,40 @@ function detectColIdx(headers: string[], keywords: string[]): number {
   return -1;
 }
 
+// Fallback amount-detection: scan a sample of rows and pick the column whose
+// values look most like dollar amounts. Useful when the header doesn't carry
+// any of the keyword tokens (e.g. "P1 WD Inv $").
+function sniffAmountCol(rows: string[][]): number {
+  if (!rows.length) return -1;
+  const numCols = rows[0].length;
+  const scores = new Array(numCols).fill(0);
+  for (const row of rows.slice(0, 30)) {
+    for (let i = 0; i < numCols && i < row.length; i++) {
+      const v = (row[i] || "").trim();
+      if (!v) continue;
+      // Strict dollar form gets the most weight; bare integers count too,
+      // but only if they're large enough not to be quantity columns.
+      if (/^[\$\-]?\s*[\d,]+(\.\d{1,4})?$/.test(v)) {
+        const numeric = parseFloat(v.replace(/[\$,\s]/g, ""));
+        if (!Number.isFinite(numeric)) continue;
+        if (v.includes("$")) scores[i] += 3;
+        else if (v.includes(",")) scores[i] += 2;
+        else if (Math.abs(numeric) >= 100) scores[i] += 1;
+      }
+    }
+  }
+  let best = -1;
+  let bestScore = 0;
+  for (let i = 0; i < scores.length; i++) {
+    if (scores[i] > bestScore) {
+      bestScore = scores[i];
+      best = i;
+    }
+  }
+  // Require enough confidence — otherwise we'd mis-classify date columns etc.
+  return bestScore >= 5 ? best : -1;
+}
+
 function sumAmountCol(rows: string[][], colIdx: number): number {
   if (colIdx < 0) return 0;
   return rows.reduce((sum, row) => {
@@ -196,7 +268,12 @@ async function parseUploadedFile(file: File): Promise<ParsedFile> {
   const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
   if (isPdf) {
     try {
-      const { text, pages, charCount } = await extractPdfText(file);
+      const { text, pages } = await extractPdfText(file);
+      const extracted = extractMemoMetadata(text, pages);
+      // Try to recover a totalAmount value for the file-loaded summary panel.
+      const totalParsed = extracted.totalAmount
+        ? Math.abs(parseFloat(extracted.totalAmount.replace(/[$,]/g, ""))) || 0
+        : 0;
       return {
         name: file.name,
         sizeKB: Math.round(file.size / 1024),
@@ -204,13 +281,14 @@ async function parseUploadedFile(file: File): Promise<ParsedFile> {
         headers: ["page"],
         sampleRows: text.split(/\n\n+/).slice(0, 20).map(p => [p.slice(0, 120)]),
         rawText: text,
-        totalAmount: 0,
+        totalAmount: totalParsed,
         detectedAmountCol: -1,
         detectedSkuCol: -1,
         detectedCustomerCol: -1,
         detectedDateCol: -1,
         status: "ready",
         errorMsg: undefined,
+        extracted,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "PDF parse failed";
@@ -238,7 +316,12 @@ async function parseUploadedFile(file: File): Promise<ParsedFile> {
       try {
         const content = (e.target?.result as string) ?? "";
         const { headers, rows, rowCount } = parseCSVContent(content);
-        const amountColIdx = detectColIdx(headers, ["amount","total","value","price","credit","debit","lineamount","netsales","salestotal","invoiceamount"]);
+        let amountColIdx = detectColIdx(headers, [
+          "amount", "total", "value", "price", "credit", "debit",
+          "lineamount", "netsales", "salestotal", "invoiceamount",
+          "rebate", "billed", "wdinv", "wd", "inv", "salesusd",
+        ]);
+        if (amountColIdx < 0) amountColIdx = sniffAmountCol(rows);
         const skuColIdx = detectColIdx(headers, ["sku","part","item","product","material","productcode","partnum","manufacturersku","mfrsku","vcsc","awicode"]);
         const customerColIdx = detectColIdx(headers, ["customer","client","soldto","customername","accountname","buyername","endcustomer"]);
         const dateColIdx = detectColIdx(headers, ["date","invoicedate","saledate","transactiondate","postingdate","orderdate","month"]);
@@ -405,6 +488,10 @@ interface AnalyzeResponse {
   posLinesTotal: number;
   posLinesEligible: number;
   periodLabel?: string | null;
+  supplierName?: string | null;
+  detectedPeriod?: string | null;
+  creditMemoNumber?: string | null;
+  creditMemoDate?: string | null;
 }
 
 function buildResultFromAnalysis(d: AnalyzeResponse): RichComputeResult {
@@ -470,7 +557,7 @@ function buildResultFromAnalysis(d: AnalyzeResponse): RichComputeResult {
       linesOut: matchedCount,
       dropOff: issueCount,
       dropOffReasons: [
-        { reason: "underpaid (Claude flagged shortfall vs expected)", count: d.perCodeBreakdown.filter(c => c.status === "underpaid").length },
+        { reason: "underpaid (shortfall vs expected)", count: d.perCodeBreakdown.filter(c => c.status === "underpaid").length },
         { reason: "unclaimed (no credit received)", count: d.perCodeBreakdown.filter(c => c.status === "unclaimed").length },
         { reason: "overpaid (received more than expected)", count: d.perCodeBreakdown.filter(c => c.status === "overpaid").length },
       ].filter(x => x.count > 0),
@@ -504,7 +591,9 @@ function buildResultFromAnalysis(d: AnalyzeResponse): RichComputeResult {
 
   return {
     program: {
-      programName: "Multi-program reconciliation",
+      programName: d.supplierName
+        ? `${d.supplierName} — multi-program reconciliation`
+        : "Multi-program reconciliation",
       programCode: "AI-ANALYSIS",
     },
     totalInputLines: d.posLinesTotal,
@@ -519,8 +608,15 @@ function buildResultFromAnalysis(d: AnalyzeResponse): RichComputeResult {
     richPipeline,
     savedCredits: [],
     lineRecords,
-    computationVersion: "claude-analysis-v1",
+    computationVersion: "helm-ai-v1",
     source: "upload",
+    supplierName: d.supplierName ?? undefined,
+    detectedPeriod: d.detectedPeriod ?? d.periodLabel ?? undefined,
+    creditMemoNumber: d.creditMemoNumber ?? undefined,
+    creditMemoDate: d.creditMemoDate ?? undefined,
+    totalReceivedCredit: d.totalReceivedCredit,
+    recoverableAmount: d.recoverableAmount,
+    perCodeBreakdown: d.perCodeBreakdown,
   };
 }
 
@@ -594,7 +690,7 @@ function FileUploadZone({ label, description, icon, accept, file, onFile, onClea
           <div className="text-xs text-muted-foreground">Parsing file…</div>
         </div>
       ) : file ? (
-        <div className={`border rounded-xl p-3 ${file.status === "error" ? "border-rose-500/40 bg-rose-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
+        <div className={`relative group border rounded-xl p-3 ${file.status === "error" ? "border-rose-500/40 bg-rose-500/5" : "border-emerald-500/30 bg-emerald-500/5"}`}>
           <div className="flex items-start justify-between gap-2 mb-2">
             <div className="flex items-center gap-1.5">
               <CheckCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -612,18 +708,103 @@ function FileUploadZone({ label, description, icon, accept, file, onFile, onClea
           ) : (
             <div className="space-y-1 text-[10px]">
               <div className="flex gap-3">
-                <span className="text-emerald-400 font-semibold">{file.rowCount.toLocaleString()} rows</span>
-                <span className="text-muted-foreground">{file.headers.length} cols</span>
+                <span className="text-emerald-400 font-semibold">
+                  {file.extracted?.documentType === "pdf"
+                    ? `${file.rowCount} ${file.rowCount === 1 ? "page" : "pages"}`
+                    : `${file.rowCount.toLocaleString()} rows`}
+                </span>
+                {file.extracted?.documentType !== "pdf" && (
+                  <span className="text-muted-foreground">{file.headers.length} cols</span>
+                )}
                 <span className="text-muted-foreground">{file.sizeKB} KB</span>
+                {file.extracted?.memoNumber && (
+                  <span className="text-emerald-400 font-mono">#{file.extracted.memoNumber}</span>
+                )}
               </div>
               {file.totalAmount > 0 && (
                 <div className="text-muted-foreground">
                   Total value: <span className="text-foreground">${file.totalAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                 </div>
               )}
-              {file.headers.length > 0 && (
+              {file.headers.length > 0 && file.extracted?.documentType !== "pdf" && (
                 <div className="text-muted-foreground truncate">Cols: {file.headers.slice(0, 4).join(", ")}{file.headers.length > 4 ? "…" : ""}</div>
               )}
+              {(file.extracted || file.headers.length > 0) && (
+                <div className="text-[10px] text-emerald-400/70 italic">hover for details</div>
+              )}
+            </div>
+          )}
+
+          {/* Hover popover with extracted details */}
+          {file.status === "ready" && (file.extracted || file.totalAmount > 0 || file.rowCount > 0) && (
+            <div
+              className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity duration-150 absolute z-30 left-0 right-0 top-full mt-2 bg-slate-950 border border-emerald-500/40 rounded-xl p-3 shadow-2xl shadow-emerald-500/10 pointer-events-none"
+            >
+              <div className="text-[10px] uppercase tracking-wider text-emerald-400 mb-2 font-semibold">
+                {file.extracted?.documentType === "pdf" ? "Extracted from PDF" : "Detected Columns"}
+              </div>
+              <div className="space-y-1.5 text-xs">
+                {file.extracted?.memoNumber && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Memo Number</span>
+                    <span className="text-foreground font-mono">{file.extracted.memoNumber}</span>
+                  </div>
+                )}
+                {file.extracted?.memoDate && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Date</span>
+                    <span className="text-foreground">{file.extracted.memoDate}</span>
+                  </div>
+                )}
+                {file.extracted?.totalAmount && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Total Amount</span>
+                    <span className="text-emerald-400 font-semibold">{file.extracted.totalAmount}</span>
+                  </div>
+                )}
+                {file.extracted?.lineCount && file.extracted.lineCount > 0 && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Line Items</span>
+                    <span className="text-foreground">{file.extracted.lineCount}</span>
+                  </div>
+                )}
+                {file.extracted?.pageCount && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Pages</span>
+                    <span className="text-foreground">{file.extracted.pageCount}</span>
+                  </div>
+                )}
+                {!file.extracted && file.totalAmount > 0 && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Detected Total</span>
+                    <span className="text-emerald-400 font-semibold">${file.totalAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  </div>
+                )}
+                {!file.extracted && file.rowCount > 0 && (
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Rows</span>
+                    <span className="text-foreground">{file.rowCount.toLocaleString()}</span>
+                  </div>
+                )}
+                {!file.extracted && file.headers.length > 0 && (
+                  <div className="pt-1 border-t border-slate-800">
+                    <div className="text-muted-foreground mb-1">All columns ({file.headers.length}):</div>
+                    <div className="text-[10px] text-foreground font-mono leading-snug">
+                      {file.headers.join(", ")}
+                    </div>
+                  </div>
+                )}
+                {file.extracted?.topLines && file.extracted.topLines.length > 0 && (
+                  <div className="pt-1.5 border-t border-slate-800">
+                    <div className="text-muted-foreground mb-1 text-[10px]">First lines:</div>
+                    <div className="text-[10px] text-foreground/80 leading-snug space-y-0.5 max-h-32 overflow-hidden">
+                      {file.extracted.topLines.map((line, i) => (
+                        <div key={i} className="truncate">{line}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -677,19 +858,47 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
     });
     timers.push(setTimeout(() => { if (!cancelled) setStep("preview"); }, elapsed + 200));
 
-    // Real Claude call in parallel — finishes whenever it finishes.
+    // Real AI call in parallel — finishes whenever it finishes.
+    const isUpload = result.source === "upload";
+    const supplierName = result.supplierName
+      ?? (isUpload ? "Supplier" : "Trane Technologies");
+    const periodLabel = result.detectedPeriod
+      ?? (isUpload ? "the analysed period" : "Q1 2024");
+
+    // For uploaded scenarios, pick the largest mismatches so the email
+    // can quote them by name.
+    const topMismatches = (result.perCodeBreakdown ?? [])
+      .filter(c => c.status !== "matched")
+      .sort((a, b) => Math.abs(b.mismatch) - Math.abs(a.mismatch))
+      .slice(0, 5)
+      .map(c => ({
+        vcsc: c.vcsc,
+        salesAmount: c.salesAmount,
+        appliedRatePct: c.appliedRebatePct < 1 ? c.appliedRebatePct * 100 : c.appliedRebatePct,
+        expectedCredit: c.expectedCredit,
+        receivedCredit: c.receivedCredit,
+        mismatch: c.mismatch,
+        status: c.status,
+      }));
+
     apiRequest("POST", "/api/ai/resolver/draft-email", {
       programName: result.program?.programName ?? "",
       programCode: result.program?.programCode ?? "",
-      periodLabel: "Q1 2024",
+      periodLabel,
       expectedAmount: result.expectedAmount,
       eligibleAmount: result.totalEligibleAmount,
       eligibleLines: result.totalEligibleLines,
       totalInputLines: result.totalInputLines,
       appliedRate: result.appliedRate,
       appliedTier: result.appliedTier,
-      supplierName: "Trane Technologies",
+      supplierName,
       computationVersion: result.computationVersion,
+      // Upload-scenario context (omitted by backend if undefined):
+      recoverableAmount: result.recoverableAmount,
+      totalReceivedCredit: result.totalReceivedCredit,
+      creditMemoNumber: result.creditMemoNumber,
+      creditMemoDate: result.creditMemoDate,
+      topMismatches: topMismatches.length ? topMismatches : undefined,
     })
       .then(r => r.json())
       .then((data: AIDraft) => { if (!cancelled) setAiDraft(data); })
@@ -699,11 +908,12 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
   }, [open, result]);
 
   const reference = aiDraft?.reference ?? "HELM-AI-DRAFT";
+  const supplierName = result.supplierName ?? "Trane Technologies";
 
   const handleSend = () => {
     setStep("sent");
     toast({
-      title: "Email sent to Trane Technologies",
+      title: `Email sent to ${supplierName}`,
       description: `Credit claim dispute dispatched · Ref: ${reference}`,
     });
   };
@@ -730,7 +940,7 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
                 Helm AI Resolver
                 <Badge className="bg-violet-500/20 text-violet-300 border-0 text-[9px] px-1.5 font-semibold">BETA</Badge>
               </DialogTitle>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Drafting a professional credit recovery email to Trane Technologies</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Drafting a professional credit recovery email to {supplierName}</p>
             </div>
           </div>
         </DialogHeader>
@@ -777,12 +987,17 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
                 {/* Email meta */}
                 <div className="bg-slate-900 px-4 py-3 border-b border-slate-700 space-y-1.5">
                   {[
-                    { label: "To", value: "vendor.rebates@trane.com; ap-disputes@tranetechnologies.com" },
+                    {
+                      label: "To",
+                      value: result.source === "upload"
+                        ? `vendor.rebates@${(supplierName || "supplier").toLowerCase().replace(/[^a-z0-9]/g, "")}.com`
+                        : "vendor.rebates@trane.com; ap-disputes@tranetechnologies.com",
+                    },
                     { label: "CC", value: "procurement@yourdomain.com; finance-ops@yourdomain.com" },
                     {
                       label: "Subject",
                       value: aiDraft?.subject
-                        ?? `FlexPath SPA Credit Recovery — Q1 2024 · $${result.expectedAmount.toLocaleString()} Outstanding · Ref: ${reference}`,
+                        ?? `${supplierName} Credit Recovery — ${result.detectedPeriod ?? "Q1 2024"} · $${result.expectedAmount.toLocaleString()} Outstanding · Ref: ${reference}`,
                     },
                   ].map(row => (
                     <div key={row.label} className="flex gap-3 text-xs">
@@ -870,7 +1085,7 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
                   </Button>
                   <Button size="sm" className="bg-violet-600 hover:bg-violet-500 gap-1.5 text-xs font-semibold" onClick={handleSend}>
                     <Send className="h-3.5 w-3.5" />
-                    Send to Trane Technologies
+                    Send to {supplierName}
                   </Button>
                 </div>
               </div>
@@ -885,7 +1100,7 @@ function AIResolverModal({ open, onClose, result }: { open: boolean; onClose: ()
               </div>
               <div>
                 <div className="text-lg font-bold text-foreground">Email Dispatched</div>
-                <div className="text-sm text-muted-foreground mt-1">Sent to vendor.rebates@trane.com and ap-disputes@tranetechnologies.com</div>
+                <div className="text-sm text-muted-foreground mt-1">Sent to {supplierName} vendor relations</div>
               </div>
               <div className="flex flex-col gap-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2 justify-center">
@@ -1306,9 +1521,9 @@ export default function ExpectedCreditEngine() {
           <div className="pt-3 border-t border-border flex items-center justify-between">
             <p className="text-[11px] text-muted-foreground">
               {allThreeReady
-                ? "All 3 files loaded — Claude will analyse rebates and reconcile against the credit memo (≈30s)"
+                ? "All 3 files loaded — Helm AI will analyse rebates and reconcile against the credit memo (≈30s)"
                 : hasUploadedFiles
-                  ? "Upload all 3 (POS, Agreement, Credit Memo) to run live Claude analysis, or click Run for the demo"
+                  ? "Upload all 3 (POS, Agreement, Credit Memo) to run live analysis, or click Run for the demo"
                   : "Upload files or run directly to see the FlexPath SPA demo result"}
             </p>
             <Button
@@ -1318,8 +1533,8 @@ export default function ExpectedCreditEngine() {
             >
               {allThreeReady ? <Sparkles className="h-4 w-4" /> : <Calculator className="h-4 w-4" />}
               {running ? (
-                <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {allThreeReady ? "Analysing with Claude…" : "Running Engine…"}</span>
-              ) : (allThreeReady ? "Analyse with Claude" : "Run Engine")}
+                <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Running Engine…</span>
+              ) : "Run Engine"}
             </Button>
           </div>
         </CardContent>
@@ -1365,7 +1580,71 @@ export default function ExpectedCreditEngine() {
       )}
 
       {/* ── Previously Computed Credits ── */}
-      {existingCredits.length > 0 && (
+      {result?.source === "upload" && (result.perCodeBreakdown?.length ?? 0) > 0 ? (
+        // Upload scenario: derive the table from this run's per-VCSC breakdown
+        // so the user sees the actual analysis, not the seeded demo records.
+        <Card className="bg-card border-border">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold">Previously Computed Credits — current run</CardTitle>
+              <span className="text-[11px] text-muted-foreground">
+                {result.detectedPeriod ?? "Analysed period"}
+                {result.creditMemoNumber && ` · Memo #${result.creditMemoNumber}`}
+              </span>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] text-muted-foreground uppercase tracking-wider border-b border-border">
+                  {["VCSC","Programs","Sales","Rebate %","Expected","Received","Mismatch","Status"].map(h => (
+                    <th key={h} className="px-4 py-2 text-left font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {result.perCodeBreakdown!.map((c, i) => {
+                  const pct = c.appliedRebatePct < 1 ? c.appliedRebatePct * 100 : c.appliedRebatePct;
+                  const statusClass = c.status === "matched"
+                    ? "bg-emerald-500/20 text-emerald-400"
+                    : c.status === "underpaid"
+                      ? "bg-amber-500/20 text-amber-400"
+                      : c.status === "unclaimed"
+                        ? "bg-rose-500/20 text-rose-400"
+                        : "bg-blue-500/20 text-blue-400";
+                  return (
+                    <tr key={i} className="border-t border-border hover:bg-muted/10">
+                      <td className="px-4 py-2 text-xs font-mono text-foreground">{c.vcsc}</td>
+                      <td className="px-4 py-2 text-xs text-muted-foreground max-w-[160px] truncate">{(c.programCodes ?? []).join(", ") || "—"}</td>
+                      <td className="px-4 py-2 text-sm tabular-nums">${c.salesAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                      <td className="px-4 py-2 text-sm tabular-nums text-amber-400">{pct.toFixed(2)}%</td>
+                      <td className="px-4 py-2 text-sm font-semibold tabular-nums text-emerald-400">${c.expectedCredit.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                      <td className="px-4 py-2 text-sm tabular-nums">${c.receivedCredit.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                      <td className={`px-4 py-2 text-sm tabular-nums font-semibold ${c.mismatch > 0 ? "text-rose-400" : c.mismatch < 0 ? "text-blue-400" : "text-muted-foreground"}`}>
+                        {c.mismatch > 0 ? "+" : ""}${c.mismatch.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-4 py-2">
+                        <Badge className={statusClass}>{c.status}</Badge>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-border bg-muted/10 font-semibold">
+                  <td className="px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground" colSpan={2}>Totals</td>
+                  <td className="px-4 py-2 text-sm tabular-nums">${result.totalEligibleAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                  <td></td>
+                  <td className="px-4 py-2 text-sm font-bold tabular-nums text-emerald-400">${(result.recoverableAmount !== undefined ? result.totalEligibleAmount * (result.appliedRate / 100) : result.expectedAmount).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                  <td className="px-4 py-2 text-sm tabular-nums">${(result.totalReceivedCredit ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                  <td className="px-4 py-2 text-sm tabular-nums text-rose-400 font-bold">${(result.recoverableAmount ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </CardContent>
+        </Card>
+      ) : existingCredits.length > 0 ? (
         <Card className="bg-card border-border">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold">Previously Computed Credits</CardTitle>
@@ -1396,7 +1675,7 @@ export default function ExpectedCreditEngine() {
             )}
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
       {/* ── AI Resolver Modal ── */}
       {result && (

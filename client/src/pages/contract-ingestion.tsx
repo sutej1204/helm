@@ -179,7 +179,7 @@ function ContractExtractor() {
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-semibold flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-violet-400" />
-            Extract with Claude — paste any contract excerpt
+            Extract terms — paste any contract excerpt
           </CardTitle>
           <Badge className="bg-violet-500/20 text-violet-300 border-0 text-[10px]">LIVE</Badge>
         </div>
@@ -225,7 +225,7 @@ function ContractExtractor() {
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-emerald-400 flex items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Extracted by Claude
+                Extracted by Helm AI
               </span>
               {typeof result.confidence === "number" && (
                 <span className="text-[10px] text-muted-foreground">

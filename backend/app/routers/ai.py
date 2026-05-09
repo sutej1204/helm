@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..auth import require_token
-from ..services.anthropic_client import complete
+from ..services.anthropic_client import complete, is_configured
+from ..services.calculator import compute as compute_deterministic
 
 
 router = APIRouter(tags=["ai"], dependencies=[Depends(require_token)])
@@ -351,77 +352,152 @@ class ExpectedCreditAnalyzeResponse(BaseModel):
 def analyze_expected_credit(
     req: ExpectedCreditAnalyzeRequest,
 ) -> ExpectedCreditAnalyzeResponse:
-    """End-to-end: extract → compute → reconcile in one Claude call.
+    """Hybrid pipeline: deterministic Python for the math, tiny AI call
+    for metadata + narrative.
 
-    Claude reads all three documents, applies the rebate-percent table to
-    POS sales, sums received credits per code, and surfaces the mismatch.
+    Math (parsing + per-VCSC computation) takes <50ms and is reproducible.
+    The AI call only needs to extract the supplier name and write a
+    one-paragraph summary, both of which fit comfortably in a Haiku
+    request that returns in ~1-3s.
     """
+    calc = compute_deterministic(
+        pos_text=req.pos_text,
+        agreement_text=req.agreement_text,
+        credit_memo_text=req.credit_memo_text,
+    )
+
+    # If the parser couldn't find a single eligible code, fall back to the
+    # legacy all-AI path — handles unfamiliar CSV layouts that our column
+    # heuristics can't follow.
+    if not calc.per_code:
+        return _legacy_all_ai_analyze(req)
+
+    # Build the structured part of the response from the calculator.
+    per_code = [
+        {
+            "vcsc": c.vcsc,
+            "salesAmount": c.sales_amount,
+            "appliedRebatePct": c.applied_rebate_pct,
+            "expectedCredit": c.expected_credit,
+            "receivedCredit": c.received_credit,
+            "mismatch": c.mismatch,
+            "status": c.status,
+            "programCodes": c.program_codes,
+        }
+        for c in calc.per_code
+    ]
+
+    # Tiny metadata + narrative call. We hand Claude only the totals and
+    # short snippets of the docs so the prompt stays small (<2K tokens) and
+    # the round-trip is fast. If the API key isn't configured or the call
+    # fails, we fall back to deterministic-only metadata.
+    metadata = _ai_metadata(req, calc) if is_configured() else {}
+
+    return ExpectedCreditAnalyzeResponse(**{
+        "totalSales": calc.total_sales,
+        "totalExpectedCredit": calc.total_expected_credit,
+        "totalReceivedCredit": calc.total_received_credit,
+        "totalMismatch": calc.total_mismatch,
+        "recoverableAmount": calc.recoverable_amount,
+        "mismatchPercent": calc.mismatch_percent,
+        "weightedAvgRebatePct": calc.weighted_avg_rebate_pct,
+        "posLinesTotal": calc.pos_lines_total,
+        "posLinesEligible": calc.pos_lines_eligible,
+        "perCodeBreakdown": per_code,
+        "summary": metadata.get("summary") or _fallback_summary(calc),
+        "periodLabel": req.period_label,
+        "supplierName": metadata.get("supplierName"),
+        # Prefer deterministic regex extraction when present; AI value is a
+        # fallback. Haiku occasionally hallucinates a period (e.g. claiming
+        # "Q1 2024" for May-Sep data), so the regex wins when it has one.
+        "detectedPeriod": calc.detected_period or metadata.get("detectedPeriod"),
+        "creditMemoNumber": calc.credit_memo_number or metadata.get("creditMemoNumber"),
+        "creditMemoDate": calc.credit_memo_date or metadata.get("creditMemoDate"),
+    })
+
+
+def _ai_metadata(req: ExpectedCreditAnalyzeRequest, calc) -> dict:
+    """Tiny Haiku call for supplier name + period + summary narrative.
+
+    Sends a small prompt: top of the agreement (where the supplier name
+    lives), top of the memo (where memo # / date live), and the totals
+    we already computed. Returns {} on parse failure.
+    """
+    agreement_excerpt = req.agreement_text[:600]
+    memo_excerpt = req.credit_memo_text[:800]
+    facts = {
+        "totalSales": calc.total_sales,
+        "totalExpectedCredit": calc.total_expected_credit,
+        "totalReceivedCredit": calc.total_received_credit,
+        "recoverableAmount": calc.recoverable_amount,
+        "underpaidCount": sum(1 for c in calc.per_code if c.status == "underpaid"),
+        "unclaimedCount": sum(1 for c in calc.per_code if c.status == "unclaimed"),
+        "matchedCount": sum(1 for c in calc.per_code if c.status == "matched"),
+        "topUnderpaidCodes": [c.vcsc for c in sorted(calc.per_code, key=lambda c: -c.mismatch)[:3]],
+    }
+
+    system = (
+        "Extract metadata + write a one-paragraph executive summary. "
+        "Output ONLY a JSON object with keys: supplierName "
+        "(manufacturer/vendor named in the agreement, e.g. 'BBB Industries'); "
+        "detectedPeriod (concise label, e.g. 'Apr–Aug 2024'); "
+        "creditMemoNumber; creditMemoDate (human-readable); summary "
+        "(2-3 sentences citing the recoverable amount and underpaid count). "
+        "Use null for any field you can't determine. JSON only — no markdown."
+    )
+    user = (
+        "AGREEMENT EXCERPT:\n" + agreement_excerpt + "\n\n"
+        "CREDIT MEMO EXCERPT:\n" + memo_excerpt + "\n\n"
+        "COMPUTED FACTS:\n" + json.dumps(facts, indent=2)
+    )
+    try:
+        raw = complete(system=system, user=user, max_tokens=600)
+    except Exception:  # noqa: BLE001 — fallback values are handled below
+        return {}
+    return _force_json(raw) or {}
+
+
+def _fallback_summary(calc) -> str:
+    """Plain-Python summary used when the AI metadata call is skipped or fails."""
+    underpaid = sum(1 for c in calc.per_code if c.status == "underpaid")
+    unclaimed = sum(1 for c in calc.per_code if c.status == "unclaimed")
+    return (
+        f"Across {len(calc.per_code)} VCSC codes, total POS sales of "
+        f"${calc.total_sales:,.0f} qualify for an expected rebate credit of "
+        f"${calc.total_expected_credit:,.0f}. The credit memo on file "
+        f"covers ${calc.total_received_credit:,.0f}, leaving "
+        f"${calc.recoverable_amount:,.0f} recoverable across "
+        f"{underpaid} underpaid and {unclaimed} unclaimed codes."
+    )
+
+
+def _legacy_all_ai_analyze(
+    req: ExpectedCreditAnalyzeRequest,
+) -> ExpectedCreditAnalyzeResponse:
+    """Original all-AI fallback for unfamiliar CSV layouts where the
+    deterministic parser can't find any eligible codes."""
     system = (
         "You are a financial analyst specialising in supplier rebate "
-        "reconciliation for industrial distribution. You will receive three "
-        "documents: (1) a POS sales export listing monthly sales by product "
-        "code (VCSC), (2) a distribution agreement listing rebate "
-        "percentages per program / VCSC, and (3) a credit memo listing "
-        "credits already received. Compute, for each VCSC code:\n"
-        "  expected_credit = sum(sales × applicable_rebate_pct)\n"
-        "  received_credit = sum(credits_received_for_that_vcsc)\n"
-        "  mismatch        = expected_credit − received_credit\n"
-        "Where multiple programs apply to the same VCSC, use the maximum "
-        "rebate percentage that matches BOTH the agreement program AND any "
-        "available program metadata. Treat rebate % values as decimals "
-        "(e.g. '8.50%' = 0.085). Skip rows whose VCSC code does not appear "
-        "in the agreement at all (those POS lines are 'ineligible').\n\n"
-        "Status rules per code:\n"
-        "  - 'matched'    : |mismatch| ≤ 5% of expected\n"
-        "  - 'underpaid'  : received < expected by more than 5%\n"
-        "  - 'overpaid'   : received > expected by more than 5%\n"
-        "  - 'unclaimed'  : received_credit == 0 and expected > 0\n\n"
-        "Return ONLY a single JSON object with keys:\n"
-        "  totalSales, totalExpectedCredit, totalReceivedCredit, "
-        "totalMismatch, recoverableAmount (sum of positive mismatches "
-        "across underpaid + unclaimed codes), mismatchPercent "
-        "(totalMismatch / totalExpectedCredit × 100), "
+        "reconciliation. The Python parser couldn't infer the file layout, "
+        "so reconcile the three documents directly. Compute per-VCSC: "
+        "expected = sales × max(rebate%); mismatch = expected − received. "
+        "Statuses: matched (|mismatch| ≤ 5% of expected), underpaid, "
+        "overpaid, unclaimed (received == 0). Output ONLY one JSON object "
+        "with keys totalSales, totalExpectedCredit, totalReceivedCredit, "
+        "totalMismatch, recoverableAmount, mismatchPercent, "
         "weightedAvgRebatePct, posLinesTotal, posLinesEligible, "
-        "perCodeBreakdown (array of {vcsc, salesAmount, "
-        "appliedRebatePct, expectedCredit, receivedCredit, mismatch, "
-        "status, programCodes}), summary (one-paragraph English "
-        "narrative).\n"
-        "  ALSO include these metadata fields when extractable:\n"
-        "    supplierName       — the manufacturer/vendor named in the "
-        "agreement (e.g. 'BBB Industries', 'Trane Technologies')\n"
-        "    detectedPeriod     — concise period label inferred from the "
-        "POS dates (e.g. 'May–Sep 2024', 'Q3 2024')\n"
-        "    creditMemoNumber   — memo number from the credit memo "
-        "(string, e.g. '3373974')\n"
-        "    creditMemoDate     — issue date from the credit memo "
-        "(human-readable, e.g. '23-SEP-2024')\n"
-        "All numbers as numbers, not strings. Output JSON only."
+        "perCodeBreakdown[] of {vcsc, salesAmount, appliedRebatePct, "
+        "expectedCredit, receivedCredit, mismatch, status, programCodes}, "
+        "summary, supplierName, detectedPeriod, creditMemoNumber, "
+        "creditMemoDate. Numbers as numbers, output JSON only."
     )
-
     user = (
-        f"=== POS SALES DATA ===\n{req.pos_text[:14000]}\n\n"
-        f"=== DISTRIBUTION AGREEMENT (rebate table) ===\n{req.agreement_text[:14000]}\n\n"
-        f"=== CREDIT MEMO (already received) ===\n{req.credit_memo_text[:14000]}\n\n"
-        f"Period: {req.period_label or 'unspecified'}\n\n"
-        "RESPONSE FORMAT — IMPORTANT: Respond with ONLY a single JSON "
-        "object. No prose, no markdown, no code fences, no commentary "
-        "before or after. The very first character of your response must "
-        "be '{' and the very last character must be '}'. Compute the "
-        "totals correctly but do not show your work — only the final JSON."
+        f"=== POS ===\n{req.pos_text[:14000]}\n\n"
+        f"=== AGREEMENT ===\n{req.agreement_text[:14000]}\n\n"
+        f"=== CREDIT MEMO ===\n{req.credit_memo_text[:14000]}"
     )
-
     raw = complete(system=system, user=user, max_tokens=4000)
-    parsed = _force_json(raw)
-    if not parsed:
-        import logging
-        logging.getLogger("helm.ai").warning(
-            "expected-credit/analyze: failed to parse Claude response. First 600 chars: %r",
-            raw[:600],
-        )
-
-    # Defensive defaults so a malformed Claude response still returns a
-    # structurally valid object — the UI can render empty rows rather than
-    # blow up on missing keys.
+    parsed = _force_json(raw) or {}
     parsed.setdefault("totalSales", 0)
     parsed.setdefault("totalExpectedCredit", 0)
     parsed.setdefault("totalReceivedCredit", 0)
@@ -438,7 +514,6 @@ def analyze_expected_credit(
     parsed.setdefault("creditMemoNumber", None)
     parsed.setdefault("creditMemoDate", None)
     parsed["periodLabel"] = req.period_label
-
     return ExpectedCreditAnalyzeResponse(**parsed)
 
 

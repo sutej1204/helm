@@ -66,6 +66,7 @@ interface ParsedFile {
   rowCount: number;
   headers: string[];
   sampleRows: string[][];
+  rawText: string;
   totalAmount: number;
   detectedAmountCol: number;
   detectedSkuCol: number;
@@ -182,12 +183,12 @@ async function parseUploadedFile(file: File): Promise<ParsedFile> {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const content = e.target?.result as string;
+        const content = (e.target?.result as string) ?? "";
         const { headers, rows, rowCount } = parseCSVContent(content);
         const amountColIdx = detectColIdx(headers, ["amount","total","value","price","credit","debit","lineamount","netsales","salestotal","invoiceamount"]);
-        const skuColIdx = detectColIdx(headers, ["sku","part","item","product","material","productcode","partnum","manufacturersku","mfrsku"]);
+        const skuColIdx = detectColIdx(headers, ["sku","part","item","product","material","productcode","partnum","manufacturersku","mfrsku","vcsc","awicode"]);
         const customerColIdx = detectColIdx(headers, ["customer","client","soldto","customername","accountname","buyername","endcustomer"]);
-        const dateColIdx = detectColIdx(headers, ["date","invoicedate","saledate","transactiondate","postingdate","orderdate"]);
+        const dateColIdx = detectColIdx(headers, ["date","invoicedate","saledate","transactiondate","postingdate","orderdate","month"]);
         const totalAmount = sumAmountCol(rows, amountColIdx);
         resolve({
           name: file.name,
@@ -195,6 +196,7 @@ async function parseUploadedFile(file: File): Promise<ParsedFile> {
           rowCount,
           headers,
           sampleRows: rows.slice(0, 20),
+          rawText: content,
           totalAmount,
           detectedAmountCol: amountColIdx,
           detectedSkuCol: skuColIdx,
@@ -203,10 +205,10 @@ async function parseUploadedFile(file: File): Promise<ParsedFile> {
           status: "ready",
         });
       } catch {
-        resolve({ name: file.name, sizeKB: Math.round(file.size / 1024), rowCount: 0, headers: [], sampleRows: [], totalAmount: 0, detectedAmountCol: -1, detectedSkuCol: -1, detectedCustomerCol: -1, detectedDateCol: -1, status: "error", errorMsg: "Could not parse file" });
+        resolve({ name: file.name, sizeKB: Math.round(file.size / 1024), rowCount: 0, headers: [], sampleRows: [], rawText: "", totalAmount: 0, detectedAmountCol: -1, detectedSkuCol: -1, detectedCustomerCol: -1, detectedDateCol: -1, status: "error", errorMsg: "Could not parse file" });
       }
     };
-    reader.onerror = () => resolve({ name: file.name, sizeKB: Math.round(file.size / 1024), rowCount: 0, headers: [], sampleRows: [], totalAmount: 0, detectedAmountCol: -1, detectedSkuCol: -1, detectedCustomerCol: -1, detectedDateCol: -1, status: "error", errorMsg: "Read error" });
+    reader.onerror = () => resolve({ name: file.name, sizeKB: Math.round(file.size / 1024), rowCount: 0, headers: [], sampleRows: [], rawText: "", totalAmount: 0, detectedAmountCol: -1, detectedSkuCol: -1, detectedCustomerCol: -1, detectedDateCol: -1, status: "error", errorMsg: "Read error" });
     reader.readAsText(file);
   });
 }
@@ -322,6 +324,151 @@ function computeFromUploadedFiles(posFile: ParsedFile, agreementFile: ParsedFile
 
 function buildGenericRichPipeline(apiPipeline: any[]): RichPipelineStep[] {
   return apiPipeline.map((step: any) => ({ step: step.step, name: step.name, linesIn: step.linesIn, linesOut: step.linesOut, dropOff: step.dropOff, dropOffReasons: step.dropOff > 0 ? [{ reason: step.reason, count: step.dropOff }] : [] }));
+}
+
+// ─── Backend analysis → RichComputeResult ────────────────────────────────────
+
+interface AnalyzeResponseCode {
+  vcsc: string;
+  salesAmount: number;
+  appliedRebatePct: number;  // may be a fraction (0.085) or a percent (8.5)
+  expectedCredit: number;
+  receivedCredit: number;
+  mismatch: number;
+  status: "matched" | "underpaid" | "overpaid" | "unclaimed";
+  programCodes?: string[];
+}
+
+interface AnalyzeResponse {
+  totalSales: number;
+  totalExpectedCredit: number;
+  totalReceivedCredit: number;
+  totalMismatch: number;
+  recoverableAmount: number;
+  mismatchPercent: number;
+  weightedAvgRebatePct: number;
+  perCodeBreakdown: AnalyzeResponseCode[];
+  summary: string;
+  posLinesTotal: number;
+  posLinesEligible: number;
+  periodLabel?: string | null;
+}
+
+function buildResultFromAnalysis(d: AnalyzeResponse): RichComputeResult {
+  const ineligible = Math.max(0, d.posLinesTotal - d.posLinesEligible);
+  const matchedCount = d.perCodeBreakdown.filter(c => c.status === "matched").length;
+  const issueCount = d.perCodeBreakdown.length - matchedCount;
+  const totalCodes = d.perCodeBreakdown.length || 1;
+  const avgRebate = d.weightedAvgRebatePct < 1
+    ? d.weightedAvgRebatePct * 100
+    : d.weightedAvgRebatePct;
+
+  // Synthesize a 5-step pipeline from the analysis output. Eligibility =
+  // POS lines that have a matching VCSC in the agreement; reconciliation =
+  // codes flagged as matched/underpaid.
+  const richPipeline: RichPipelineStep[] = [
+    {
+      step: 1,
+      name: "Eligibility Filter",
+      linesIn: d.posLinesTotal,
+      linesOut: d.posLinesEligible,
+      dropOff: ineligible,
+      dropOffReasons: ineligible > 0
+        ? [{ reason: "VCSC code not in agreement roster", count: ineligible }]
+        : [],
+      recoverableNote: ineligible > 0
+        ? `${ineligible} POS line(s) reference codes not on the agreement — verify with master data.`
+        : undefined,
+    },
+    {
+      step: 2,
+      name: "UOM Normalisation",
+      linesIn: d.posLinesEligible,
+      linesOut: d.posLinesEligible,
+      dropOff: 0,
+      dropOffReasons: [],
+    },
+    {
+      step: 3,
+      name: "Rate Application",
+      linesIn: d.posLinesEligible,
+      linesOut: d.posLinesEligible,
+      dropOff: 0,
+      dropOffReasons: [{
+        reason: `weighted-avg rate ${avgRebate.toFixed(2)}% applied across ${totalCodes} programs`,
+        count: d.posLinesEligible,
+      }],
+    },
+    {
+      step: 4,
+      name: "Tier Application",
+      linesIn: d.posLinesEligible,
+      linesOut: d.posLinesEligible,
+      dropOff: 0,
+      dropOffReasons: [{
+        reason: `expected credit: $${Math.round(d.totalExpectedCredit).toLocaleString()}`,
+        count: d.posLinesEligible,
+      }],
+    },
+    {
+      step: 5,
+      name: "Reconciliation vs Credit Memo",
+      linesIn: totalCodes,
+      linesOut: matchedCount,
+      dropOff: issueCount,
+      dropOffReasons: [
+        { reason: "underpaid (Claude flagged shortfall vs expected)", count: d.perCodeBreakdown.filter(c => c.status === "underpaid").length },
+        { reason: "unclaimed (no credit received)", count: d.perCodeBreakdown.filter(c => c.status === "unclaimed").length },
+        { reason: "overpaid (received more than expected)", count: d.perCodeBreakdown.filter(c => c.status === "overpaid").length },
+      ].filter(x => x.count > 0),
+      recoverableNote: d.recoverableAmount > 0
+        ? `$${Math.round(d.recoverableAmount).toLocaleString()} potentially recoverable across ${issueCount} program code(s).`
+        : undefined,
+    },
+  ];
+
+  // Each per-code row becomes one LineRecord so the table shows real codes.
+  const lineRecords: LineRecord[] = d.perCodeBreakdown.map((c, i) => {
+    const passed = c.status === "matched";
+    const pct = c.appliedRebatePct < 1 ? c.appliedRebatePct * 100 : c.appliedRebatePct;
+    return {
+      lineId: `BBB-${String(i + 1).padStart(4, "0")}`,
+      sku: c.vcsc,
+      customer: (c.programCodes ?? []).join(", ") || "—",
+      date: "2024",
+      qty: 1,
+      value: c.salesAmount,
+      status: passed ? "passed" : "dropped",
+      reasonCode: passed
+        ? "PASS"
+        : c.status.toUpperCase(),
+      appliedRate: pct,
+      tier: passed ? "matched" : c.status,
+      exclusionFlag: false,
+      droppedAtStep: passed ? null : 5,
+    };
+  });
+
+  return {
+    program: {
+      programName: "Multi-program reconciliation",
+      programCode: "AI-ANALYSIS",
+    },
+    totalInputLines: d.posLinesTotal,
+    totalEligibleLines: d.posLinesEligible,
+    totalEligibleAmount: d.totalSales,
+    appliedRate: avgRebate,
+    appliedTier: `weighted across ${totalCodes} programs`,
+    exclusionsAmount: 0,
+    // Hero shows the headline number — recoverable mismatch is the most
+    // useful figure for "what should we go claim".
+    expectedAmount: d.recoverableAmount > 0 ? d.recoverableAmount : d.totalExpectedCredit,
+    richPipeline,
+    savedCredits: [],
+    lineRecords,
+    computationVersion: "claude-analysis-v1",
+    source: "upload",
+  };
 }
 
 function buildGenericLineRecords(savedCredits: any[]): LineRecord[] {
@@ -930,31 +1077,58 @@ export default function ExpectedCreditEngine() {
   const [creditMemosFile, setCreditMemosFile] = useState<ParsedFile | null>(null);
 
   const hasUploadedFiles = posFile?.status === "ready" || agreementFile?.status === "ready" || creditMemosFile?.status === "ready";
+  const allThreeReady = posFile?.status === "ready" && agreementFile?.status === "ready" && creditMemosFile?.status === "ready";
 
-  const runEngine = () => {
+  const runEngine = async () => {
     setRunning(true);
     setResult(null);
-    // Simulate a brief processing delay then always show FlexPath mock result
+
+    // If all three files are uploaded → real Claude analysis through the backend.
+    if (allThreeReady && posFile && agreementFile && creditMemosFile) {
+      try {
+        const r = await apiRequest("POST", "/api/ai/expected-credit/analyze", {
+          posText: posFile.rawText,
+          agreementText: agreementFile.rawText,
+          creditMemoText: creditMemosFile.rawText,
+          periodLabel: "May–Sep 2024",
+        });
+        const data = await r.json();
+        setResult(buildResultFromAnalysis(data));
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        toast({
+          title: "Analysis failed",
+          description: `Falling back to demo result. Reason: ${msg}`,
+          variant: "destructive",
+        });
+        setResult(buildDemoResult(true));
+      }
+      setRunning(false);
+      return;
+    }
+
+    // No / partial files → demo result with brief simulated delay.
     setTimeout(() => {
-      const mockResult: RichComputeResult = {
-        program: { programName: "Trane FlexPath SPA", programCode: "TRAN-SPA-FLEXPATH-Q1" },
-        totalInputLines: 4217,
-        totalEligibleLines: 3832,
-        totalEligibleAmount: 4694200,
-        appliedRate: 5.0,
-        appliedTier: "Tier 2 (>$500k)",
-        exclusionsAmount: 0,
-        expectedAmount: 234710,
-        richPipeline: FLEXPATH_RICH_PIPELINE,
-        savedCredits: [],
-        lineRecords: buildFlexPathLineRecords(),
-        computationVersion: "v2.2.0",
-        source: hasUploadedFiles ? "upload" : "seed",
-      };
-      setResult(mockResult);
+      setResult(buildDemoResult(hasUploadedFiles));
       setRunning(false);
     }, 1400);
   };
+
+  const buildDemoResult = (fromUpload: boolean): RichComputeResult => ({
+    program: { programName: "Trane FlexPath SPA", programCode: "TRAN-SPA-FLEXPATH-Q1" },
+    totalInputLines: 4217,
+    totalEligibleLines: 3832,
+    totalEligibleAmount: 4694200,
+    appliedRate: 5.0,
+    appliedTier: "Tier 2 (>$500k)",
+    exclusionsAmount: 0,
+    expectedAmount: 234710,
+    richPipeline: FLEXPATH_RICH_PIPELINE,
+    savedCredits: [],
+    lineRecords: buildFlexPathLineRecords(),
+    computationVersion: "v2.2.0",
+    source: fromUpload ? "upload" : "seed",
+  });
 
   const exportClaimMutation = useMutation({
     mutationFn: async () => {
@@ -1078,17 +1252,21 @@ export default function ExpectedCreditEngine() {
           {/* Run Engine button */}
           <div className="pt-3 border-t border-border flex items-center justify-between">
             <p className="text-[11px] text-muted-foreground">
-              {hasUploadedFiles ? "Files loaded — engine will compute from uploaded data" : "Upload files or run directly to see the FlexPath SPA result"}
+              {allThreeReady
+                ? "All 3 files loaded — Claude will analyse rebates and reconcile against the credit memo (≈30s)"
+                : hasUploadedFiles
+                  ? "Upload all 3 (POS, Agreement, Credit Memo) to run live Claude analysis, or click Run for the demo"
+                  : "Upload files or run directly to see the FlexPath SPA demo result"}
             </p>
             <Button
               className="gap-2 bg-emerald-600 hover:bg-emerald-700 px-6"
               onClick={runEngine}
               disabled={running}
             >
-              <Calculator className="h-4 w-4" />
+              {allThreeReady ? <Sparkles className="h-4 w-4" /> : <Calculator className="h-4 w-4" />}
               {running ? (
-                <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Running Engine…</span>
-              ) : "Run Engine"}
+                <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {allThreeReady ? "Analysing with Claude…" : "Running Engine…"}</span>
+              ) : (allThreeReady ? "Analyse with Claude" : "Run Engine")}
             </Button>
           </div>
         </CardContent>

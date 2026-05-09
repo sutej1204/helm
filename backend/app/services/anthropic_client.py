@@ -46,8 +46,15 @@ def complete(
     user: str,
     max_tokens: int = 1024,
     model: str | None = None,
+    prefill: str | None = None,
 ) -> str:
-    """Make a non-streaming Messages call. Returns the joined text reply."""
+    """Make a non-streaming Messages call. Returns the joined text reply.
+
+    `prefill` puts a partial assistant message in front of Claude's response,
+    forcing it to continue from there. Useful for guaranteed JSON output:
+    pass `prefill='{'` and the response will start as a JSON object — the
+    function automatically prepends '{' back so the caller sees complete JSON.
+    """
     client = _client()
     if client is None:
         raise AIUnavailable(
@@ -55,13 +62,17 @@ def complete(
             "Set it in backend/.env (local) or the service's Environment tab (Render)."
         )
 
+    messages: list[dict] = [{"role": "user", "content": user}]
+    if prefill is not None:
+        messages.append({"role": "assistant", "content": prefill})
+
     settings = get_settings()
     try:
         message = client.messages.create(
             model=model or settings.anthropic_model,
             max_tokens=max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=messages,
         )
     except APIStatusError as e:
         # Surface Anthropic's status code as-is so 401 keys, 429 rate limits,
@@ -71,4 +82,5 @@ def complete(
         raise AIUnavailable(f"Could not reach Anthropic: {e}") from e
 
     parts = [b.text for b in message.content if getattr(b, "type", None) == "text"]
-    return "\n".join(parts).strip()
+    body = "\n".join(parts).strip()
+    return (prefill + body) if prefill else body

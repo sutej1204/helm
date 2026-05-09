@@ -154,21 +154,195 @@ def extract_contract_terms(req: ContractExtractRequest) -> ExtractedTerms:
     return ExtractedTerms(**parsed)
 
 
+# ── /api/ai/expected-credit/analyze ──────────────────────────────────────────
+
+
+class ExpectedCreditAnalyzeRequest(BaseModel):
+    """All three uploaded docs as text. The frontend already parses CSV
+    client-side and can pass the parsed sample; PDFs / XLS would be parsed
+    upstream and converted to text/CSV before calling this endpoint."""
+
+    pos_text: str = Field(..., alias="posText")
+    agreement_text: str = Field(..., alias="agreementText")
+    credit_memo_text: str = Field(..., alias="creditMemoText")
+    period_label: str | None = Field(default=None, alias="periodLabel")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class CodeBreakdown(BaseModel):
+    """Per-VCSC (per product code) breakdown."""
+
+    model_config = ConfigDict(populate_by_name=True)
+    vcsc: str
+    sales_amount: float = Field(..., alias="salesAmount")
+    applied_rebate_pct: float = Field(..., alias="appliedRebatePct")
+    expected_credit: float = Field(..., alias="expectedCredit")
+    received_credit: float = Field(..., alias="receivedCredit")
+    mismatch: float
+    status: str  # "matched" | "underpaid" | "overpaid" | "unclaimed"
+    program_codes: list[str] = Field(default_factory=list, alias="programCodes")
+
+
+class ExpectedCreditAnalyzeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    total_sales: float = Field(..., alias="totalSales")
+    total_expected_credit: float = Field(..., alias="totalExpectedCredit")
+    total_received_credit: float = Field(..., alias="totalReceivedCredit")
+    total_mismatch: float = Field(..., alias="totalMismatch")
+    recoverable_amount: float = Field(..., alias="recoverableAmount")
+    mismatch_percent: float = Field(..., alias="mismatchPercent")
+    weighted_avg_rebate_pct: float = Field(..., alias="weightedAvgRebatePct")
+    per_code_breakdown: list[CodeBreakdown] = Field(..., alias="perCodeBreakdown")
+    summary: str
+    period_label: str | None = Field(default=None, alias="periodLabel")
+    pos_lines_total: int = Field(..., alias="posLinesTotal")
+    pos_lines_eligible: int = Field(..., alias="posLinesEligible")
+
+
+@router.post(
+    "/api/ai/expected-credit/analyze",
+    response_model=ExpectedCreditAnalyzeResponse,
+    response_model_by_alias=True,
+)
+def analyze_expected_credit(
+    req: ExpectedCreditAnalyzeRequest,
+) -> ExpectedCreditAnalyzeResponse:
+    """End-to-end: extract → compute → reconcile in one Claude call.
+
+    Claude reads all three documents, applies the rebate-percent table to
+    POS sales, sums received credits per code, and surfaces the mismatch.
+    """
+    system = (
+        "You are a financial analyst specialising in supplier rebate "
+        "reconciliation for industrial distribution. You will receive three "
+        "documents: (1) a POS sales export listing monthly sales by product "
+        "code (VCSC), (2) a distribution agreement listing rebate "
+        "percentages per program / VCSC, and (3) a credit memo listing "
+        "credits already received. Compute, for each VCSC code:\n"
+        "  expected_credit = sum(sales × applicable_rebate_pct)\n"
+        "  received_credit = sum(credits_received_for_that_vcsc)\n"
+        "  mismatch        = expected_credit − received_credit\n"
+        "Where multiple programs apply to the same VCSC, use the maximum "
+        "rebate percentage that matches BOTH the agreement program AND any "
+        "available program metadata. Treat rebate % values as decimals "
+        "(e.g. '8.50%' = 0.085). Skip rows whose VCSC code does not appear "
+        "in the agreement at all (those POS lines are 'ineligible').\n\n"
+        "Status rules per code:\n"
+        "  - 'matched'    : |mismatch| ≤ 5% of expected\n"
+        "  - 'underpaid'  : received < expected by more than 5%\n"
+        "  - 'overpaid'   : received > expected by more than 5%\n"
+        "  - 'unclaimed'  : received_credit == 0 and expected > 0\n\n"
+        "Return ONLY a single JSON object with keys: totalSales, "
+        "totalExpectedCredit, totalReceivedCredit, totalMismatch, "
+        "recoverableAmount (sum of positive mismatches across underpaid + "
+        "unclaimed codes), mismatchPercent (totalMismatch / "
+        "totalExpectedCredit × 100), weightedAvgRebatePct, posLinesTotal, "
+        "posLinesEligible, perCodeBreakdown (array of {vcsc, salesAmount, "
+        "appliedRebatePct, expectedCredit, receivedCredit, mismatch, "
+        "status, programCodes}), summary (one-paragraph English "
+        "narrative). All numbers as numbers, not strings. Output JSON only."
+    )
+
+    user = (
+        f"=== POS SALES DATA ===\n{req.pos_text[:14000]}\n\n"
+        f"=== DISTRIBUTION AGREEMENT (rebate table) ===\n{req.agreement_text[:14000]}\n\n"
+        f"=== CREDIT MEMO (already received) ===\n{req.credit_memo_text[:14000]}\n\n"
+        f"Period: {req.period_label or 'unspecified'}\n\n"
+        "RESPONSE FORMAT — IMPORTANT: Respond with ONLY a single JSON "
+        "object. No prose, no markdown, no code fences, no commentary "
+        "before or after. The very first character of your response must "
+        "be '{' and the very last character must be '}'. Compute the "
+        "totals correctly but do not show your work — only the final JSON."
+    )
+
+    raw = complete(system=system, user=user, max_tokens=4000)
+    parsed = _force_json(raw)
+    if not parsed:
+        import logging
+        logging.getLogger("helm.ai").warning(
+            "expected-credit/analyze: failed to parse Claude response. First 600 chars: %r",
+            raw[:600],
+        )
+
+    # Defensive defaults so a malformed Claude response still returns a
+    # structurally valid object — the UI can render empty rows rather than
+    # blow up on missing keys.
+    parsed.setdefault("totalSales", 0)
+    parsed.setdefault("totalExpectedCredit", 0)
+    parsed.setdefault("totalReceivedCredit", 0)
+    parsed.setdefault("totalMismatch", 0)
+    parsed.setdefault("recoverableAmount", 0)
+    parsed.setdefault("mismatchPercent", 0)
+    parsed.setdefault("weightedAvgRebatePct", 0)
+    parsed.setdefault("posLinesTotal", 0)
+    parsed.setdefault("posLinesEligible", 0)
+    parsed.setdefault("perCodeBreakdown", [])
+    parsed.setdefault("summary", "Analysis returned no narrative.")
+    parsed["periodLabel"] = req.period_label
+
+    return ExpectedCreditAnalyzeResponse(**parsed)
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
 def _force_json(text: str) -> dict:
-    """Best-effort JSON parse — Claude usually obeys 'output ONLY JSON' but
-    occasionally wraps in ```json ... ``` or a trailing comment. Strip those."""
+    """Best-effort JSON parse. Builds a list of candidate JSON strings from
+    the response (raw text, fenced code blocks, and every balanced top-level
+    `{...}` block) and tries each. Returns the parsed dict with the most
+    keys — handy when Claude inlines small JSON examples in narration but
+    the real answer is the full object.
+    """
     s = text.strip()
-    if s.startswith("```"):
-        # remove leading ```json or ``` and trailing ```
-        s = s.split("\n", 1)[1] if "\n" in s else s
-        if s.endswith("```"):
-            s = s[: -3]
-    s = s.strip()
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        # fall back: return empty so the caller's defaults kick in
-        return {}
+    candidates: list[str] = [s]
+
+    # All fenced ``` ... ``` blocks (alt indices when split on ```).
+    parts = s.split("```")
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            inner = part.split("\n", 1)[1] if "\n" in part else part
+            candidates.append(inner.strip().rstrip("`").strip())
+
+    # Every balanced top-level {...} block.
+    depth = 0
+    in_str = False
+    esc = False
+    starts: list[int] = []
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                starts.append(i)
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and starts:
+                candidates.append(s[starts.pop() : i + 1])
+
+    # Try each candidate; keep the dict with the most keys (the "real" payload
+    # rather than a tiny example object Claude might have shown inline).
+    best: dict = {}
+    best_score = -1
+    for c in candidates:
+        try:
+            obj = json.loads(c)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            score = len(obj)
+            if score > best_score:
+                best = obj
+                best_score = score
+    return best

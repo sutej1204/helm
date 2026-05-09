@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     # When unset, AI endpoints return a stubbed response so the UI still
     # renders without leaking errors.
     anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-sonnet-4-6"
+    # Haiku 4.5 is fast (~3-5s) and quality is sufficient for the prose +
+    # structured-extraction tasks we run. Override via ANTHROPIC_MODEL env
+    # var if any single endpoint ever needs Sonnet/Opus reasoning depth.
+    anthropic_model: str = "claude-haiku-4-5-20251001"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

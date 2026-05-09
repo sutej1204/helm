@@ -11,10 +11,19 @@ import json
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
 
 from ..auth import require_token
+from ..db import get_db
+from ..services import agreement_extractor
 from ..services.anthropic_client import complete, is_configured
-from ..services.calculator import compute as compute_deterministic
+from ..services.calculator import (
+    compute as compute_deterministic,
+    compute_from_components,
+    parse_agreement_csv,
+    parse_credit_memo,
+    parse_pos_csv,
+)
 
 
 router = APIRouter(tags=["ai"], dependencies=[Depends(require_token)])
@@ -351,24 +360,54 @@ class ExpectedCreditAnalyzeResponse(BaseModel):
 )
 def analyze_expected_credit(
     req: ExpectedCreditAnalyzeRequest,
+    db: Session = Depends(get_db),
 ) -> ExpectedCreditAnalyzeResponse:
-    """Hybrid pipeline: deterministic Python for the math, tiny AI call
-    for metadata + narrative.
-
-    Math (parsing + per-VCSC computation) takes <50ms and is reproducible.
-    The AI call only needs to extract the supplier name and write a
-    one-paragraph summary, both of which fit comfortably in a Haiku
-    request that returns in ~1-3s.
+    """Hybrid pipeline:
+      1. Parse all three docs deterministically (CSV path).
+      2. If the agreement was a PDF (no CSV structure), call the AI
+         agreement extractor, persist its programs to the DB, and feed
+         its rebate map into the calculator.
+      3. Tiny AI call for supplier name + narrative summary.
+    Math itself is always deterministic.
     """
-    calc = compute_deterministic(
-        pos_text=req.pos_text,
-        agreement_text=req.agreement_text,
-        credit_memo_text=req.credit_memo_text,
+    # Always-deterministic parses for POS + memo. The agreement may or
+    # may not parse as CSV — we call the same parser regardless and
+    # branch on whether it found anything.
+    sales, total_lines, dates = parse_pos_csv(req.pos_text)
+    csv_rebates, csv_programs = parse_agreement_csv(req.agreement_text)
+    received, memo_number, memo_date = parse_credit_memo(req.credit_memo_text)
+
+    # Path B: PDF agreement (or any other unstructured agreement). Run
+    # the AI extractor and cache the result in the DB.
+    ai_supplier_name: str | None = None
+    ai_extraction_meta: dict | None = None
+    if not csv_rebates:
+        extraction = agreement_extractor.extract(req.agreement_text)
+        if extraction.programs:
+            persisted = agreement_extractor.persist(
+                db,
+                extraction,
+                source_filename=req.period_label,
+            )
+            csv_rebates, csv_programs = agreement_extractor.to_rebate_maps(extraction)
+            ai_supplier_name = extraction.supplier_name
+            ai_extraction_meta = {
+                **persisted,
+                "programCount": len(extraction.programs),
+                "effectiveDate": extraction.effective_date,
+                "expirationDate": extraction.expiration_date,
+                "paymentTerms": extraction.payment_terms,
+            }
+
+    calc = compute_from_components(
+        sales, total_lines, dates,
+        csv_rebates, csv_programs,
+        received, memo_number, memo_date,
     )
 
-    # If the parser couldn't find a single eligible code, fall back to the
-    # legacy all-AI path — handles unfamiliar CSV layouts that our column
-    # heuristics can't follow.
+    # Final fallback: if even the AI agreement extractor produced no
+    # rebates that match the POS VCSCs, send the whole bundle to the
+    # legacy all-AI endpoint so we still return *something*.
     if not calc.per_code:
         return _legacy_all_ai_analyze(req)
 
@@ -406,7 +445,9 @@ def analyze_expected_credit(
         "perCodeBreakdown": per_code,
         "summary": metadata.get("summary") or _fallback_summary(calc),
         "periodLabel": req.period_label,
-        "supplierName": metadata.get("supplierName"),
+        # Supplier name precedence: AI agreement extractor (most authoritative
+        # when the agreement was AI-parsed) → metadata-only AI call → null.
+        "supplierName": ai_supplier_name or metadata.get("supplierName"),
         # Prefer deterministic regex extraction when present; AI value is a
         # fallback. Haiku occasionally hallucinates a period (e.g. claiming
         # "Q1 2024" for May-Sep data), so the regex wins when it has one.
@@ -515,6 +556,61 @@ def _legacy_all_ai_analyze(
     parsed.setdefault("creditMemoDate", None)
     parsed["periodLabel"] = req.period_label
     return ExpectedCreditAnalyzeResponse(**parsed)
+
+
+# ── /api/ai/agreement/extract ────────────────────────────────────────────────
+
+
+class AgreementExtractTextRequest(BaseModel):
+    """JSON-only path: front-end has already extracted PDF text and just
+    wants the AI-structured rebate programs back (and persisted)."""
+
+    text: str
+    filename: str | None = None
+
+
+@router.post("/api/ai/agreement/extract")
+def extract_agreement_endpoint(
+    req: AgreementExtractTextRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Extract structured programs from agreement text (typically PDF text
+    that the front-end already pulled via /api/ai/extract-pdf), persist
+    to suppliers / vendor_agreements / programs, and return both.
+
+    Re-uploads of the same agreement (matched by SHA-1 of the text) skip
+    the AI call and return the cached records.
+    """
+    if not req.text or len(req.text.strip()) < 20:
+        raise HTTPException(400, "Agreement text is empty or too short to analyse.")
+
+    extraction = agreement_extractor.extract(req.text)
+    persisted = agreement_extractor.persist(
+        db, extraction, source_filename=req.filename
+    )
+
+    return {
+        "supplierName": extraction.supplier_name,
+        "effectiveDate": extraction.effective_date,
+        "expirationDate": extraction.expiration_date,
+        "paymentTerms": extraction.payment_terms,
+        "programCount": len(extraction.programs),
+        "programs": [
+            {
+                "awiCode": p.awi_code,
+                "programName": p.program_name,
+                "programType": p.program_type,
+                "rebatePct": p.rebate_pct,
+                "vcscs": p.vcscs,
+                "frequency": p.frequency,
+                "cap": p.cap,
+                "exclusions": p.exclusions,
+            }
+            for p in extraction.programs
+        ],
+        "persisted": persisted,
+        "cached": persisted.get("cached", False),
+    }
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

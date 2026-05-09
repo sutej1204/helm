@@ -225,19 +225,64 @@ def parse_credit_memo(text: str) -> tuple[dict[str, float], str | None, str | No
         except csv.Error:
             pass
 
-    # PDF-text path: line-item rows look like:
-    #   "1 8888015.100MWI GE02 BBB HD Loyalty Credit GE02 1 $-22,500.00 $-22,500.00"
-    line_pattern = re.compile(
+    # PDF-text path. Two layouts in the wild:
+    #   (a) all cells on one line:
+    #       "1 8888015.100MWI GE02 BBB HD Loyalty Credit GE02 1 $-22,500.00 $-22,500.00"
+    #   (b) pypdf split per cell, one line per cell:
+    #         1
+    #         8888015.100MWI
+    #         GE02
+    #         BBB HD Loyalty Credit GE02
+    #         1
+    #         $-22,500.00
+    #         $-22,500.00
+    # First try (a); if nothing matches, fall through to a block-walker
+    # that handles (b).
+    one_line_pattern = re.compile(
         r"^\s*\d+\s+\S+\s+([A-Z][A-Z0-9]{1,7})\s+.+?\$?(-?[\d,]+\.\d{2})\s+\$?(-?[\d,]+\.\d{2})\s*$",
         re.MULTILINE,
     )
-    for m in line_pattern.finditer(text):
-        vcsc = m.group(1).upper()
-        amt_str = m.group(3).replace(",", "")
-        try:
-            received[vcsc] = received.get(vcsc, 0.0) + abs(float(amt_str))
-        except ValueError:
+    matches = list(one_line_pattern.finditer(text))
+    if matches:
+        for m in matches:
+            vcsc = m.group(1).upper()
+            amt_str = m.group(3).replace(",", "")
+            try:
+                received[vcsc] = received.get(vcsc, 0.0) + abs(float(amt_str))
+            except ValueError:
+                continue
+        return received, memo_number, memo_date
+
+    # Layout (b): walk lines, pair VCSC codes with the next $ amount.
+    vcsc_line = re.compile(r"^[A-Z][A-Z0-9]{1,5}$")
+    money_line = re.compile(r"^\$?\s*(-?[\d,]+\.\d{2})\s*(USD)?\s*$")
+    pending: str | None = None
+    pending_lookahead = 0
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line:
             continue
+        if vcsc_line.fullmatch(line):
+            # Skip "TOTAL" / metadata words masquerading as VCSCs by length.
+            if line in {"USD", "QTY", "TOTAL", "DATE"}:
+                continue
+            pending = line
+            pending_lookahead = 6  # look at next ~6 non-empty lines
+            continue
+        m = money_line.match(line)
+        if m and pending and pending_lookahead > 0:
+            amt = m.group(1).replace(",", "")
+            try:
+                received[pending] = received.get(pending, 0.0) + abs(float(amt))
+            except ValueError:
+                pass
+            pending = None  # one amount per VCSC; ignore the duplicate "total" line
+            pending_lookahead = 0
+            continue
+        if pending:
+            pending_lookahead -= 1
+            if pending_lookahead <= 0:
+                pending = None
 
     return received, memo_number, memo_date
 
@@ -291,11 +336,19 @@ def _format_period(dates: list[str]) -> str | None:
     return a if a == b else f"{a}–{b}"
 
 
-def compute(pos_text: str, agreement_text: str, credit_memo_text: str) -> CalcResult:
-    sales, total_lines, dates = parse_pos_csv(pos_text)
-    rebates, programs = parse_agreement_csv(agreement_text)
-    received, memo_number, memo_date = parse_credit_memo(credit_memo_text)
-
+def compute_from_components(
+    sales: dict[str, float],
+    total_lines: int,
+    dates: list[str],
+    rebates: dict[str, float],
+    programs: dict[str, list[str]],
+    received: dict[str, float],
+    memo_number: str | None,
+    memo_date: str | None,
+) -> CalcResult:
+    """Run the math given pre-parsed inputs. Used by `compute()` (full
+    text path) and by the analyze endpoint when an AI extractor supplies
+    the rebates/programs maps for a PDF agreement."""
     eligible = sorted(set(sales) & set(rebates))
     per_code: list[CodeAnalysis] = []
 
@@ -340,4 +393,15 @@ def compute(pos_text: str, agreement_text: str, credit_memo_text: str) -> CalcRe
         credit_memo_number=memo_number,
         credit_memo_date=memo_date,
         detected_period=_format_period(dates),
+    )
+
+
+def compute(pos_text: str, agreement_text: str, credit_memo_text: str) -> CalcResult:
+    """Convenience: parse all three docs (CSV path) then run the math."""
+    sales, total_lines, dates = parse_pos_csv(pos_text)
+    rebates, programs = parse_agreement_csv(agreement_text)
+    received, memo_number, memo_date = parse_credit_memo(credit_memo_text)
+    return compute_from_components(
+        sales, total_lines, dates, rebates, programs, received,
+        memo_number, memo_date,
     )

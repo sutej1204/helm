@@ -149,13 +149,91 @@ def _programs(agreement_ids: list[int]) -> list[dict]:
     ]
 
 
+def ensure_ai_analysis_placeholder() -> tuple[int, int]:
+    """Idempotent: make sure the AI-ANALYSIS supplier + program exist so
+    upload-derived credit rows have a valid FK target. Safe to call on every
+    startup — does nothing on the second call.
+
+    Returns (supplier_id, program_id).
+    """
+    with SessionLocal() as db:
+        sup = db.query(Supplier).filter_by(code="AI-ANALYSIS").one_or_none()
+        if not sup:
+            sup = Supplier(
+                name="AI Analysis Placeholder",
+                code="AI-ANALYSIS",
+                category="Internal",
+                contact_name="—",
+                email="ai-analysis@helm.local",
+                phone="—",
+                address="—",
+                status="active",
+                risk_score=0.0,
+                compliance_rate=1.0,
+                spend_amount=0,
+                payment_terms=30,
+            )
+            db.add(sup)
+            db.flush()
+
+        agr = (
+            db.query(VendorAgreement)
+            .filter_by(supplier_id=sup.id, agreement_name="AI Analysis Synthetic Agreement")
+            .one_or_none()
+        )
+        if not agr:
+            agr = VendorAgreement(
+                supplier_id=sup.id,
+                agreement_name="AI Analysis Synthetic Agreement",
+                effective_date=date(2024, 1, 1),
+                expiration_date=date(2026, 12, 31),
+                status="active",
+                document_url=None,
+                ingestion_status="parsed",
+                ingestion_confidence=Decimal("100"),
+            )
+            db.add(agr)
+            db.flush()
+
+        prog = (
+            db.query(Program)
+            .filter_by(program_code="AI-ANALYSIS")
+            .one_or_none()
+        )
+        if not prog:
+            prog = Program(
+                agreement_id=agr.id,
+                program_type="reconciliation",
+                program_name="AI-driven reconciliation",
+                program_code="AI-ANALYSIS",
+                base_rate=Decimal("0"),
+                rate_type="percent",
+                tier_structure=None,
+                cap=None,
+                eligible_skus=None,
+                eligible_customer_classes=None,
+                exclusions=None,
+                effective_date=date(2024, 1, 1),
+                expiration_date=date(2026, 12, 31),
+                claim_deadline_days=180,
+                reporting_format="internal",
+                active=True,
+            )
+            db.add(prog)
+            db.flush()
+
+        db.commit()
+        return sup.id, prog.id
+
+
 def seed() -> None:
     # Make sure tables exist (handy when running before alembic).
     Base.metadata.create_all(bind=get_engine())
+    ensure_ai_analysis_placeholder()
 
     with SessionLocal() as db:
-        if db.scalar(select(Supplier).limit(1)):
-            print("Seed: suppliers already present, skipping.")
+        if db.scalar(select(Supplier).filter(Supplier.code != "AI-ANALYSIS").limit(1)):
+            print("Seed: demo data already present, skipping.")
             return
 
         # Suppliers

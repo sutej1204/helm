@@ -97,6 +97,45 @@ class ExpectedCreditOut(_Out):
     status: str
     claim_id: int | None = None
     program: ProgramOut | None = None
+    # Upload-analysis fields (null on seeded demo rows).
+    vcsc: str | None = None
+    received_amount: Decimal | None = None
+    mismatch_amount: Decimal | None = None
+    program_codes: list[str] | None = None
+
+
+class BulkExpectedCreditItem(BaseModel):
+    """One per-VCSC row in a bulk-persist request from the engine."""
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=_to_camel)
+
+    vcsc: str
+    sales_amount: Decimal
+    applied_rate: Decimal
+    expected_amount: Decimal
+    received_amount: Decimal
+    mismatch: Decimal
+    status: str
+    program_codes: list[str] = Field(default_factory=list)
+
+
+class BulkExpectedCreditRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=_to_camel)
+
+    period_start: date
+    period_end: date
+    computation_version: str = "helm-ai-v1"
+    supplier_name: str | None = None
+    items: list[BulkExpectedCreditItem]
+
+
+class BulkExpectedCreditResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=_to_camel)
+
+    inserted: int
+    deleted: int  # rows replaced from the previous run for the same period
+    program_id: int
+    rows: list[ExpectedCreditOut]
 
 
 # ── Claims ───────────────────────────────────────────────────────────────────

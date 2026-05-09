@@ -118,6 +118,13 @@ class ExpectedCredit(Base):
     computation_version: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="computed")
     claim_id: Mapped[int | None] = mapped_column(Integer)
+    # Upload-analysis fields (populated by /api/expected-credits/bulk).
+    # Nullable because seeded rows from the original demo don't carry
+    # per-VCSC data.
+    vcsc: Mapped[str | None] = mapped_column(Text)
+    received_amount: Mapped[Decimal | None] = mapped_column(Numeric)
+    mismatch_amount: Mapped[Decimal | None] = mapped_column(Numeric)
+    program_codes: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
 
 
 class Claim(Base):

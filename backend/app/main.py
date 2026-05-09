@@ -31,12 +31,41 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     Base.metadata.create_all(bind=get_engine())
+    _apply_pending_migrations()
     if os.environ.get("HELM_AUTO_SEED", "true").lower() in {"1", "true", "yes"}:
         try:
             seed_data()
         except Exception:  # noqa: BLE001 — log + continue rather than crash boot
             logger.exception("Seeding failed; continuing without seed data.")
     yield
+
+
+def _apply_pending_migrations() -> None:
+    """Lightweight migration shim used in lieu of Alembic for the MVP.
+
+    SQLAlchemy's `create_all()` only creates tables that don't already
+    exist; it never adds columns to an existing table. When we extend a
+    model (e.g. the per-VCSC fields on `expected_credits`), we run an
+    idempotent `ALTER TABLE ADD COLUMN IF NOT EXISTS` here so deploys
+    with an older schema upgrade themselves on the next boot.
+
+    Postgres-specific (uses IF NOT EXISTS in ALTER ADD). When we move to
+    Alembic this whole function goes away.
+    """
+    from sqlalchemy import text
+
+    pending = [
+        "ALTER TABLE expected_credits ADD COLUMN IF NOT EXISTS vcsc text",
+        "ALTER TABLE expected_credits ADD COLUMN IF NOT EXISTS received_amount numeric",
+        "ALTER TABLE expected_credits ADD COLUMN IF NOT EXISTS mismatch_amount numeric",
+        "ALTER TABLE expected_credits ADD COLUMN IF NOT EXISTS program_codes text[]",
+    ]
+    with get_engine().begin() as conn:
+        for stmt in pending:
+            try:
+                conn.execute(text(stmt))
+            except Exception:  # noqa: BLE001 — log + continue
+                logger.exception("Migration failed: %s", stmt)
 
 
 app = FastAPI(

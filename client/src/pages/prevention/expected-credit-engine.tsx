@@ -1347,11 +1347,52 @@ export default function ExpectedCreditEngine() {
   const hasUploadedFiles = posFile?.status === "ready" || agreementFile?.status === "ready" || creditMemosFile?.status === "ready";
   const allThreeReady = posFile?.status === "ready" && agreementFile?.status === "ready" && creditMemosFile?.status === "ready";
 
+  // Persist the per-VCSC breakdown to expected_credits via /bulk so the next
+  // page-load (or another session) picks up the analysis from the seeded
+  // /api/expected-credits query rather than vanishing on refresh.
+  const persistAnalysis = async (data: AnalyzeResponse) => {
+    if (!data.perCodeBreakdown?.length) return;
+    // Best-effort period inference: prefer the model's own labels, fall back
+    // to a generic Q-of-the-year window if neither is set.
+    const period = data.detectedPeriod ?? data.periodLabel ?? "";
+    const yearMatch = period.match(/(20\d{2})/);
+    const fallbackYear = yearMatch ? yearMatch[1] : "2024";
+    const periodStart = `${fallbackYear}-01-01`;
+    const periodEnd = `${fallbackYear}-12-31`;
+
+    const items = data.perCodeBreakdown.map(c => ({
+      vcsc: c.vcsc,
+      salesAmount: c.salesAmount,
+      appliedRate: c.appliedRebatePct,
+      expectedAmount: c.expectedCredit,
+      receivedAmount: c.receivedCredit,
+      mismatch: c.mismatch,
+      status: c.status,
+      programCodes: c.programCodes ?? [],
+    }));
+
+    const r = await apiRequest("POST", "/api/expected-credits/bulk", {
+      periodStart,
+      periodEnd,
+      computationVersion: "helm-ai-v1",
+      supplierName: data.supplierName ?? null,
+      items,
+    });
+    const persisted = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/expected-credits"] });
+    toast({
+      title: `Saved ${persisted.inserted} credit row${persisted.inserted === 1 ? "" : "s"}`,
+      description: persisted.deleted > 0
+        ? `Replaced ${persisted.deleted} prior row${persisted.deleted === 1 ? "" : "s"} from a previous run.`
+        : "Now visible in Previously Computed Credits.",
+    });
+  };
+
   const runEngine = async () => {
     setRunning(true);
     setResult(null);
 
-    // If all three files are uploaded → real Claude analysis through the backend.
+    // If all three files are uploaded → real AI analysis through the backend.
     if (allThreeReady && posFile && agreementFile && creditMemosFile) {
       try {
         const r = await apiRequest("POST", "/api/ai/expected-credit/analyze", {
@@ -1360,8 +1401,20 @@ export default function ExpectedCreditEngine() {
           creditMemoText: creditMemosFile.rawText,
           periodLabel: "May–Sep 2024",
         });
-        const data = await r.json();
-        setResult(buildResultFromAnalysis(data));
+        const data: AnalyzeResponse = await r.json();
+        const built = buildResultFromAnalysis(data);
+        setResult(built);
+        // Fire-and-forget persistence — surface a toast on result, don't
+        // block the UI on completion. Re-runs of the same period replace
+        // prior rows server-side, so this stays idempotent.
+        persistAnalysis(data).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : "Persistence failed";
+          toast({
+            title: "Couldn't save analysis",
+            description: msg,
+            variant: "destructive",
+          });
+        });
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         toast({
@@ -1398,16 +1451,47 @@ export default function ExpectedCreditEngine() {
     source: fromUpload ? "upload" : "seed",
   });
 
+  // Look up programs + suppliers so we can resolve the AI-ANALYSIS
+  // placeholder ids at claim-creation time without hardcoding.
+  const { data: allPrograms = [] } = useQuery<any[]>({ queryKey: ["/api/programs"] });
+  const { data: allSuppliers = [] } = useQuery<any[]>({ queryKey: ["/api/suppliers"] });
+
   const exportClaimMutation = useMutation({
     mutationFn: async () => {
       if (!result) return;
+
+      const isUpload = result.source === "upload";
+      // Pick (programId, supplierId, claim metadata) based on demo vs upload.
+      let programId = 9;          // default: seeded Trane FlexPath SPA
+      let supplierId = 2;          // default: Trane Technologies
+      let claimNumber = `CLM-DRAFT-TRAN-SPA-FLEXPATH-Q1-${Date.now()}`;
+      let periodStart = "2024-01-01";
+      let periodEnd = "2024-03-31";
+
+      if (isUpload) {
+        const aiProgram = allPrograms.find((p: any) => p.programCode === "AI-ANALYSIS");
+        const aiSupplier = allSuppliers.find((s: any) => s.code === "AI-ANALYSIS");
+        if (aiProgram) programId = aiProgram.id;
+        if (aiSupplier) supplierId = aiSupplier.id;
+        claimNumber = `CLM-DRAFT-AI-${(result.supplierName ?? "SUPPLIER").replace(/\s+/g, "-").toUpperCase()}-${Date.now()}`;
+        // Best-effort period: detected period might be a label like "May–Sep
+        // 2024"; fall back to whole year when we can only infer the year.
+        const yearMatch = (result.detectedPeriod ?? "").match(/(20\d{2})/);
+        const yr = yearMatch ? yearMatch[1] : "2024";
+        periodStart = `${yr}-01-01`;
+        periodEnd = `${yr}-12-31`;
+      }
+
       return apiRequest("POST", "/api/claims", {
-        claimNumber: `CLM-DRAFT-TRAN-SPA-FLEXPATH-Q1-${Date.now()}`,
-        programId: 9, supplierId: 2,
-        periodStart: "2024-01-01", periodEnd: "2024-03-31",
+        claimNumber,
+        programId,
+        supplierId,
+        periodStart,
+        periodEnd,
         submittedAmount: String(result.expectedAmount.toFixed(2)),
         expectedAmount: String(result.expectedAmount.toFixed(2)),
-        format: "edi_844", status: "draft",
+        format: "edi_844",
+        status: "draft",
         submittedAt: null, acknowledgedAt: null, adjudicatedAt: null,
         approvedAmount: null, rejectedAmount: null, rejectionReasonCodes: null, disputeStatus: null,
       });

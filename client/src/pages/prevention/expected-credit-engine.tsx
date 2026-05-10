@@ -1608,7 +1608,7 @@ export default function ExpectedCreditEngine() {
                 ? "All 3 files loaded — Helm AI will analyse rebates and reconcile against the credit memo (≈30s)"
                 : hasUploadedFiles
                   ? "Upload all 3 (POS, Agreement, Credit Memo) to run live analysis, or click Run for the demo"
-                  : "Upload files or run directly to see the FlexPath SPA demo result"}
+                  : ""}
             </p>
             <Button
               className="gap-2 bg-emerald-600 hover:bg-emerald-700 px-6"
